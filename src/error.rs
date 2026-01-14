@@ -60,8 +60,8 @@ pub enum PCloudError {
 #[derive(Error, Debug)]
 pub enum FfiError {
     /// Library initialization failed
-    #[error("Failed to initialize pclsync library")]
-    InitFailed,
+    #[error("Failed to initialize pclsync library: {message} (error code: {code})")]
+    InitFailed { code: u32, message: String },
 
     /// Null pointer was returned from C function
     #[error("Null pointer returned from C function: {context}")]
@@ -362,6 +362,28 @@ pub enum DaemonError {
 
 // Conversion implementations for pclsync error codes
 
+impl FfiError {
+    /// Create an InitFailed error from a pclsync error code.
+    ///
+    /// Maps the error code to a human-readable message based on known
+    /// PERROR_* constants from pclsync.
+    pub fn init_failed(code: u32) -> Self {
+        let message = match code {
+            0 => "Unknown error".to_string(),
+            1 => "Local folder not found".to_string(),
+            2 => "Remote folder not found".to_string(),
+            3 => "Failed to open database".to_string(),
+            4 => "No home directory found".to_string(),
+            5 => "SSL initialization failed".to_string(),
+            6 => "Database error".to_string(),
+            7 => "Local folder access denied".to_string(),
+            8 => "Remote folder access denied".to_string(),
+            _ => format!("Unknown initialization error"),
+        };
+        FfiError::InitFailed { code, message }
+    }
+}
+
 impl CryptoError {
     /// Convert a pclsync crypto setup error code to a CryptoError.
     pub fn from_setup_code(code: i32) -> Self {
@@ -467,7 +489,7 @@ mod tests {
 
     #[test]
     fn test_pcloud_error_from_ffi() {
-        let ffi_err = FfiError::InitFailed;
+        let ffi_err = FfiError::init_failed(5);
         let pcloud_err: PCloudError = ffi_err.into();
         assert!(matches!(pcloud_err, PCloudError::Ffi(_)));
     }
@@ -513,8 +535,10 @@ mod tests {
 
     #[test]
     fn test_ffi_error_display() {
-        let err = FfiError::InitFailed;
+        let err = FfiError::init_failed(5);
         assert!(err.to_string().contains("initialize"));
+        assert!(err.to_string().contains("SSL"));
+        assert!(err.to_string().contains("5"));
 
         let err = FfiError::NullPointer { context: "test" };
         assert!(err.to_string().contains("Null pointer"));
@@ -538,6 +562,27 @@ mod tests {
     fn test_ffi_error_already_initialized() {
         let err = FfiError::AlreadyInitialized;
         assert!(err.to_string().contains("already initialized"));
+    }
+
+    #[test]
+    fn test_ffi_error_init_failed_codes() {
+        // Test known error codes
+        let err = FfiError::init_failed(3);
+        assert!(err.to_string().contains("database"));
+
+        let err = FfiError::init_failed(4);
+        assert!(err.to_string().contains("home directory"));
+
+        let err = FfiError::init_failed(5);
+        assert!(err.to_string().contains("SSL"));
+
+        let err = FfiError::init_failed(6);
+        assert!(err.to_string().contains("Database error"));
+
+        // Test unknown error code
+        let err = FfiError::init_failed(999);
+        assert!(err.to_string().contains("999"));
+        assert!(err.to_string().contains("Unknown"));
     }
 
     // =========================================================================

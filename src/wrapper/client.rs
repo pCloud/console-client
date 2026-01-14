@@ -129,7 +129,7 @@ impl PCloudClient {
     ///
     /// - `Ok(Arc<Mutex<PCloudClient>>)` on success
     /// - `Err(PCloudError::Ffi(FfiError::AlreadyInitialized))` if already initialized
-    /// - `Err(PCloudError::Ffi(FfiError::InitFailed))` if C library init failed
+    /// - `Err(PCloudError::Ffi(FfiError::InitFailed { .. }))` if C library init failed
     ///
     /// # Example
     ///
@@ -149,7 +149,9 @@ impl PCloudClient {
             let result = unsafe { raw::psync_init() };
 
             if result != 0 {
-                return Err(PCloudError::Ffi(FfiError::InitFailed));
+                // Get the specific error code from the C library
+                let error_code = unsafe { raw::psync_get_last_error() };
+                return Err(PCloudError::Ffi(FfiError::init_failed(error_code)));
             }
 
             // Create the client instance
