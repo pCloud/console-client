@@ -1,0 +1,41 @@
+[package]
+name = "console-client"
+version = "0.1.0"
+edition = "2021"
+description = "pCloud console client - Rust rewrite"
+license = "BSD-3-Clause"
+
+[lib]
+name = "console_client"
+path = "src/lib.rs"
+
+[[bin]]
+name = "pcloud"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+thiserror = "2.0"
+anyhow = "1.0"
+secrecy = { version = "0.10", features = ["serde"] }
+zeroize = "1.8"
+rpassword = "7.3"
+daemonize = "0.5"
+serde = { version = "1.0", features = ["derive"] }
+bincode = "1.3"
+once_cell = "1.19"
+libc = "0.2"
+ctrlc = "3.4"
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.29", features = ["signal", "process"] }
+
+[build-dependencies]
+cc = "1.0"
+bindgen = "0.70"
+pkg-config = "0.3"
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "3.1"
+tempfile = "3.10"

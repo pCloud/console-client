@@ -1,0 +1,517 @@
+//! Build script for compiling the pclsync C library and linking dependencies.
+//!
+//! This script:
+//! - Detects the target platform (Linux/macOS)
+//! - Compiles all pclsync .c source files
+//! - Links required system libraries (fuse, sqlite3, pthread, wolfssl, zlib)
+//! - Sets up include paths for C headers
+//! - Generates Rust bindings for C structs using bindgen
+//!
+//! # Required System Dependencies
+//!
+//! ## Linux (Debian/Ubuntu)
+//! ```bash
+//! sudo apt-get install libfuse-dev libsqlite3-dev libwolfssl-dev zlib1g-dev libclang-dev
+//! ```
+//!
+//! ## Linux (Fedora/RHEL)
+//! ```bash
+//! sudo dnf install fuse-devel sqlite-devel wolfssl-devel zlib-devel clang-devel
+//! ```
+//!
+//! ## macOS
+//! ```bash
+//! brew install macfuse sqlite wolfssl llvm
+//! ```
+
+use std::env;
+use std::path::PathBuf;
+
+fn main() {
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let pclsync_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("pclsync");
+
+    // Verify pclsync directory exists
+    if !pclsync_dir.exists() {
+        panic!(
+            "pclsync directory not found at {:?}. \
+             Please initialize git submodules: git submodule update --init",
+            pclsync_dir
+        );
+    }
+
+    // Configure the C compiler
+    let mut build = cc::Build::new();
+
+    // Common compiler flags
+    build
+        .warnings(true)
+        //.flag_if_supported("-Wall")
+        .flag_if_supported("-Wpointer-arith")
+        .opt_level(2)
+        .flag_if_supported("-fno-stack-protector")
+        .flag_if_supported("-fomit-frame-pointer");
+
+    // Include path for pclsync headers
+    build.include(&pclsync_dir);
+
+    // Platform-specific configuration
+    match target_os.as_str() {
+        "linux" => configure_linux(&mut build, &pclsync_dir),
+        "macos" => configure_macos(&mut build, &pclsync_dir),
+        _ => {
+            eprintln!("Warning: Unsupported target OS '{}', attempting Linux-like build", target_os);
+            configure_linux(&mut build, &pclsync_dir);
+        }
+    }
+
+    // Add common source files (from Makefile OBJ)
+    let common_sources = [
+        "pcompat.c",
+        "psynclib.c",
+        "plocks.c",
+        "plibs.c",
+        "pcallbacks.c",
+        "pdiff.c",
+        "pstatus.c",
+        "papi.c",
+        "ptimer.c",
+        "pupload.c",
+        "pdownload.c",
+        "pfolder.c",
+        "psyncer.c",
+        "ptasks.c",
+        "psettings.c",
+        "pnetlibs.c",
+        "pcache.c",
+        "pscanner.c",
+        "plist.c",
+        "plocalscan.c",
+        "plocalnotify.c",
+        "pp2p.c",
+        "pcrypto.c",
+        "pssl.c",
+        "pfileops.c",
+        "ptree.c",
+        "ppassword.c",
+        "prunratelimit.c",
+        "pmemlock.c",
+        "pnotifications.c",
+        // New files in updated pclsync
+        "pexternalstatus.c",
+        "publiclinks.c",
+        "pbusinessaccount.c",
+        "pcontacts.c",
+        "poverlay.c",
+        "pcompression.c",
+        "pasyncnet.c",
+        "ppathstatus.c",
+        "pdevice_monitor.c",
+        "ptools.c",
+        "miniz.c",
+    ];
+
+    // Add filesystem source files (from Makefile OBJFS)
+    let fs_sources = [
+        "pfs.c",
+        "ppagecache.c",
+        "pfsfolder.c",
+        "pfstasks.c",
+        "pfsupload.c",
+        "pintervaltree.c",
+        "pfsxattr.c",
+        "pcloudcrypto.c",
+        "pfscrypto.c",
+        "pcrc32c.c",
+        "pfsstatic.c",
+    ];
+
+    // Add all source files
+    for source in common_sources.iter().chain(fs_sources.iter()) {
+        let source_path = pclsync_dir.join(source);
+        if source_path.exists() {
+            build.file(&source_path);
+        } else {
+            eprintln!("Warning: Source file not found: {:?}", source_path);
+        }
+    }
+
+    // Compile the library
+    build.compile("pclsync");
+
+    // Link system libraries
+    link_system_libraries(&target_os);
+
+    // Generate bindings using bindgen
+    generate_bindings(&pclsync_dir, &out_dir, &target_os);
+
+    // Tell Cargo to rerun this script if pclsync sources change
+    println!("cargo:rerun-if-changed=pclsync/");
+    println!("cargo:rerun-if-changed=build.rs");
+}
+
+/// Generate Rust bindings for pclsync C structs using bindgen.
+///
+/// This generates bindings for:
+/// - pstatus_t: Sync status struct
+/// - Callback function pointer types
+/// - Event types and data structures
+/// - Folder/file list types
+fn generate_bindings(pclsync_dir: &PathBuf, out_dir: &PathBuf, target_os: &str) {
+    let header_path = pclsync_dir.join("psynclib.h");
+
+    if !header_path.exists() {
+        eprintln!(
+            "Warning: psynclib.h not found at {:?}, skipping bindgen",
+            header_path
+        );
+        return;
+    }
+
+    let mut builder = bindgen::Builder::default()
+        .header(header_path.to_string_lossy())
+        // Include the pclsync directory for headers
+        .clang_arg(format!("-I{}", pclsync_dir.display()))
+        // Generate bindings for the status struct
+        .allowlist_type("pstatus_t")
+        // Generate bindings for folder/file types
+        .allowlist_type("pfolder_t")
+        .allowlist_type("pfile_t")
+        .allowlist_type("pentry_t")
+        .allowlist_type("pfolder_list_t")
+        .allowlist_type("psync_folder_t")
+        .allowlist_type("psync_folder_list_t")
+        // Generate bindings for event types
+        .allowlist_type("psync_file_event_t")
+        .allowlist_type("psync_folder_event_t")
+        .allowlist_type("psync_share_event_t")
+        .allowlist_type("psync_eventdata_t")
+        // Generate bindings for notification types
+        .allowlist_type("psync_notification_t")
+        .allowlist_type("psync_notification_list_t")
+        .allowlist_type("psync_notification_action_t")
+        // Generate bindings for share types
+        .allowlist_type("psync_sharerequest_t")
+        .allowlist_type("psync_sharerequest_list_t")
+        .allowlist_type("psync_share_t")
+        .allowlist_type("psync_share_list_t")
+        // Generate bindings for new version type
+        .allowlist_type("psync_new_version_t")
+        // Generate bindings for suggested folders
+        .allowlist_type("psuggested_folder_t")
+        .allowlist_type("psuggested_folders_t")
+        // Generate typedef aliases for common types
+        .allowlist_type("psync_folderid_t")
+        .allowlist_type("psync_fileid_t")
+        .allowlist_type("psync_fileorfolderid_t")
+        .allowlist_type("psync_userid_t")
+        .allowlist_type("psync_shareid_t")
+        .allowlist_type("psync_sharerequestid_t")
+        .allowlist_type("psync_syncid_t")
+        .allowlist_type("psync_eventtype_t")
+        .allowlist_type("psync_synctype_t")
+        .allowlist_type("psync_listtype_t")
+        // Generate callback type definitions
+        .allowlist_type("pstatus_change_callback_t")
+        .allowlist_type("pevent_callback_t")
+        .allowlist_type("pnotification_callback_t")
+        .allowlist_type("psync_generic_callback_t")
+        .allowlist_type("psync_malloc_t")
+        .allowlist_type("psync_realloc_t")
+        .allowlist_type("psync_free_t")
+        // Use core types
+        .use_core()
+        // Generate Debug trait implementations
+        .derive_debug(true)
+        // Generate Default trait where possible
+        .derive_default(true)
+        // Generate Copy/Clone for simple types
+        .derive_copy(true)
+        // Layout tests help verify struct layout matches C
+        .layout_tests(true)
+        // Use explicit padding
+        .explicit_padding(true)
+        // Don't generate bindings for functions (we declare them manually)
+        .ignore_functions()
+        // Blocklist time_t to avoid conflicts
+        .blocklist_type("time_t")
+        // Map time_t to libc::time_t
+        .raw_line("pub type time_t = libc::time_t;");
+
+    // Add platform-specific defines
+    match target_os {
+        "linux" => {
+            builder = builder
+                .clang_arg("-DP_OS_LINUX")
+                .clang_arg("-DP_OS_POSIX")
+                .clang_arg("-D_FILE_OFFSET_BITS=64");
+        }
+        "macos" => {
+            builder = builder
+                .clang_arg("-DP_OS_MACOSX")
+                .clang_arg("-DP_OS_BSD")
+                .clang_arg("-DP_OS_POSIX")
+                .clang_arg("-D_DARWIN_USE_64_BIT_INODE")
+                .clang_arg("-D_FILE_OFFSET_BITS=64");
+        }
+        _ => {
+            builder = builder.clang_arg("-DP_OS_POSIX");
+        }
+    }
+
+    // Generate the bindings
+    let bindings = builder
+        .generate()
+        .expect("Failed to generate bindings");
+
+    // Write bindings to $OUT_DIR/bindings.rs
+    let bindings_path = out_dir.join("bindings.rs");
+    bindings
+        .write_to_file(&bindings_path)
+        .expect("Failed to write bindings");
+
+    println!("cargo:rerun-if-changed={}", header_path.display());
+    eprintln!("Generated bindings at {:?}", bindings_path);
+}
+
+fn configure_linux(build: &mut cc::Build, pclsync_dir: &PathBuf) {
+    // Define Linux platform
+    build.define("P_OS_LINUX", None);
+    // Note: _GNU_SOURCE is defined in pcompat.h, so we don't need to define it again
+    build.define("_FILE_OFFSET_BITS", "64");
+
+    // Use WolfSSL on Linux
+    build.define("P_SSL_WOLFSSL", None);
+
+    // Add WolfSSL SSL implementation
+    let ssl_source = pclsync_dir.join("pssl-wolfssl.c");
+    if ssl_source.exists() {
+        build.file(&ssl_source);
+    } else {
+        panic!("pssl-wolfssl.c not found at {:?}", ssl_source);
+    }
+
+    // Note: poverlay_lin.c is included via #include in poverlay.c,
+    // so we don't compile it separately
+
+    // Try to find SQLite3 include path using pkg-config
+    match pkg_config::Config::new().probe("sqlite3") {
+        Ok(sqlite) => {
+            for include in &sqlite.include_paths {
+                build.include(include);
+            }
+        }
+        Err(e) => {
+            eprintln!("Warning: pkg-config failed to find sqlite3: {}", e);
+            eprintln!("Hint: Install libsqlite3-dev (Debian/Ubuntu) or sqlite-devel (Fedora/RHEL)");
+        }
+    }
+
+    // Try to find FUSE include path using pkg-config
+    if let Ok(fuse) = pkg_config::Config::new().probe("fuse") {
+        for include in &fuse.include_paths {
+            build.include(include);
+        }
+    } else if let Ok(fuse3) = pkg_config::Config::new().probe("fuse3") {
+        for include in &fuse3.include_paths {
+            build.include(include);
+        }
+    } else {
+        eprintln!("Warning: pkg-config failed to find fuse or fuse3");
+        eprintln!("Hint: Install libfuse-dev (Debian/Ubuntu) or fuse-devel (Fedora/RHEL)");
+    }
+
+    // Try to find WolfSSL include path using pkg-config
+    match pkg_config::Config::new().probe("wolfssl") {
+        Ok(wolfssl) => {
+            for include in &wolfssl.include_paths {
+                build.include(include);
+                // WolfSSL headers are often in a wolfssl subdirectory
+                let wolfssl_subdir = PathBuf::from(include).join("wolfssl");
+                if wolfssl_subdir.exists() {
+                    build.include(&wolfssl_subdir);
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("Warning: pkg-config failed to find wolfssl: {}", e);
+            eprintln!("Hint: Install libwolfssl-dev (Debian/Ubuntu) or wolfssl-devel (Fedora/RHEL)");
+            // Try common fallback paths
+            let fallback_paths = [
+                "/usr/include/wolfssl",
+                "/usr/local/include/wolfssl",
+            ];
+            for path in &fallback_paths {
+                let p = PathBuf::from(path);
+                if p.exists() {
+                    build.include(path);
+                    break;
+                }
+            }
+        }
+    }
+
+    // Try to find zlib include path
+    if let Ok(zlib) = pkg_config::Config::new().probe("zlib") {
+        for include in &zlib.include_paths {
+            build.include(include);
+        }
+    }
+}
+
+fn configure_macos(build: &mut cc::Build, pclsync_dir: &PathBuf) {
+    // Define macOS platform
+    build.define("P_OS_MACOSX", None);
+    build.define("P_OS_BSD", None);
+    build.define("P_OS_POSIX", None);
+    build.define("_DARWIN_USE_64_BIT_INODE", None);
+    build.define("_FILE_OFFSET_BITS", "64");
+
+    // Use WolfSSL on macOS
+    build.define("P_SSL_WOLFSSL", None);
+
+    // Add WolfSSL SSL implementation
+    let ssl_source = pclsync_dir.join("pssl-wolfssl.c");
+    if ssl_source.exists() {
+        build.file(&ssl_source);
+    } else {
+        panic!("pssl-wolfssl.c not found at {:?}", ssl_source);
+    }
+
+    // Note: poverlay_mac.c is included via #include in poverlay.c,
+    // so we don't compile it separately
+
+    // Try pkg-config first for all libraries
+    if let Ok(sqlite) = pkg_config::Config::new().probe("sqlite3") {
+        for include in &sqlite.include_paths {
+            build.include(include);
+        }
+    }
+
+    // Try to find WolfSSL include path using pkg-config
+    if let Ok(wolfssl) = pkg_config::Config::new().probe("wolfssl") {
+        for include in &wolfssl.include_paths {
+            build.include(include);
+            // WolfSSL headers are often in a wolfssl subdirectory
+            let wolfssl_subdir = PathBuf::from(include).join("wolfssl");
+            if wolfssl_subdir.exists() {
+                build.include(&wolfssl_subdir);
+            }
+        }
+    } else {
+        // Fall back to common Homebrew paths for WolfSSL
+        let wolfssl_include_paths = [
+            "/usr/local/opt/wolfssl/include",
+            "/opt/homebrew/opt/wolfssl/include",
+            "/usr/local/include/wolfssl",
+        ];
+
+        for path in &wolfssl_include_paths {
+            let p = PathBuf::from(path);
+            if p.exists() {
+                build.include(path);
+                break;
+            }
+        }
+    }
+
+    // Try pkg-config for FUSE, fall back to common paths
+    if let Ok(fuse) = pkg_config::Config::new().probe("fuse") {
+        for include in &fuse.include_paths {
+            build.include(include);
+        }
+    } else if let Ok(osxfuse) = pkg_config::Config::new().probe("osxfuse") {
+        for include in &osxfuse.include_paths {
+            build.include(include);
+        }
+    } else {
+        // Fall back to common macOS FUSE paths
+        let fuse_include_paths = [
+            "/usr/local/include/osxfuse",
+            "/usr/local/include/fuse",
+            "/opt/homebrew/include/fuse",
+            "/opt/homebrew/include/osxfuse",
+            "/Library/Frameworks/macFUSE.framework/Headers",
+        ];
+
+        for path in &fuse_include_paths {
+            let p = PathBuf::from(path);
+            if p.exists() {
+                build.include(path);
+                break;
+            }
+        }
+    }
+}
+
+fn link_system_libraries(target_os: &str) {
+    match target_os {
+        "linux" => {
+            // Use pkg-config to find libraries when available
+            link_with_pkgconfig_or_fallback("fuse", "fuse");
+            link_with_pkgconfig_or_fallback("sqlite3", "sqlite3");
+            link_with_pkgconfig_or_fallback("wolfssl", "wolfssl");
+            // Note: pclsync now uses embedded miniz instead of system zlib
+
+            // libudev for device monitoring
+            link_with_pkgconfig_or_fallback("libudev", "udev");
+
+            // pthread is always available on Linux
+            println!("cargo:rustc-link-lib=pthread");
+            // math library needed for some crypto operations
+            println!("cargo:rustc-link-lib=m");
+        }
+        "macos" => {
+            // Link libraries on macOS
+            // Try pkg-config first, fall back to direct linking
+
+            // FUSE (osxfuse or macfuse)
+            if pkg_config::Config::new().probe("osxfuse").is_err()
+                && pkg_config::Config::new().probe("fuse").is_err()
+            {
+                println!("cargo:rustc-link-lib=osxfuse");
+                // Common library search paths on macOS
+                println!("cargo:rustc-link-search=/usr/local/lib");
+                println!("cargo:rustc-link-search=/opt/homebrew/lib");
+                println!("cargo:rustc-link-search=/Library/Frameworks/macFUSE.framework/Libraries");
+            }
+
+            // SQLite3
+            link_with_pkgconfig_or_fallback("sqlite3", "sqlite3");
+
+            // WolfSSL
+            if pkg_config::Config::new().probe("wolfssl").is_err() {
+                println!("cargo:rustc-link-lib=wolfssl");
+                // Homebrew WolfSSL paths
+                println!("cargo:rustc-link-search=/usr/local/opt/wolfssl/lib");
+                println!("cargo:rustc-link-search=/opt/homebrew/opt/wolfssl/lib");
+            }
+
+            // Note: pclsync now uses embedded miniz instead of system zlib
+
+            // Cocoa framework for macOS
+            println!("cargo:rustc-link-lib=framework=Cocoa");
+        }
+        _ => {
+            // Fallback: try to link common libraries
+            println!("cargo:rustc-link-lib=fuse");
+            println!("cargo:rustc-link-lib=sqlite3");
+            println!("cargo:rustc-link-lib=wolfssl");
+            println!("cargo:rustc-link-lib=udev");
+            println!("cargo:rustc-link-lib=pthread");
+            println!("cargo:rustc-link-lib=m");
+        }
+    }
+}
+
+/// Try to find a library using pkg-config, fall back to direct linking
+fn link_with_pkgconfig_or_fallback(pkg_name: &str, lib_name: &str) {
+    if pkg_config::Config::new()
+        .cargo_metadata(true)
+        .probe(pkg_name)
+        .is_err()
+    {
+        println!("cargo:rustc-link-lib={}", lib_name);
+    }
+}
