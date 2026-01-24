@@ -950,7 +950,7 @@ mod tests {
     fn test_status_trampoline_null_pointer() {
         // Should not panic when called with null
         unsafe {
-            status_callback_trampoline(std::ptr::null());
+            status_callback_trampoline(std::ptr::null_mut());
         }
     }
 
@@ -966,11 +966,11 @@ mod tests {
         });
 
         // Create a test status
-        let status = pstatus_t::default();
+        let mut status = pstatus_t::default();
 
         // Invoke the trampoline
         unsafe {
-            status_callback_trampoline(&status);
+            status_callback_trampoline(&mut status);
         }
 
         assert!(called.load(Ordering::SeqCst));
@@ -987,11 +987,11 @@ mod tests {
         });
 
         // Create a test status
-        let status = pstatus_t::default();
+        let mut status = pstatus_t::default();
 
         // Invoke the trampoline - should not panic the test
         unsafe {
-            status_callback_trampoline(&status);
+            status_callback_trampoline(&mut status);
         }
 
         // If we got here, the panic was caught

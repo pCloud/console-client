@@ -4,11 +4,13 @@
 //! - Command-line argument parsing using clap
 //! - CLI command definitions and execution
 //! - User interaction (prompts, output formatting)
+//! - Authentication prompts
 //!
 //! # Submodules
 //!
 //! - `args`: Clap argument definitions and CLI struct
 //! - `commands`: Interactive command parsing and execution
+//! - `auth_prompt`: Interactive authentication prompts
 //!
 //! # Example
 //!
@@ -24,10 +26,12 @@
 //! ```
 
 pub mod args;
+pub mod auth_prompt;
 pub mod commands;
 
 // Re-export main types for convenience
 pub use args::Cli;
+pub use auth_prompt::{prompt_auth_choice, prompt_credentials, prompt_token, print_cli_auth_help, AuthChoice};
 pub use commands::{CommandPrompt, InteractiveCommand};
 
 /// Initialize CLI module.

@@ -540,7 +540,9 @@ mod tests {
 
     #[test]
     fn test_secret_password_security() {
-        let password = Secret::new("crypto_secret_password".to_string());
+        use secrecy::SecretString;
+
+        let password = SecretString::from("crypto_secret_password".to_string());
         let debug_output = format!("{:?}", password);
 
         // Verify password doesn't appear in debug output

@@ -123,7 +123,7 @@ mod tests {
         };
 
         // These are function pointers - just verify they exist
-        let _: unsafe extern "C" fn(*const ffi::pstatus_t) = status_callback_trampoline;
+        let _: unsafe extern "C" fn(*mut ffi::pstatus_t) = status_callback_trampoline;
         let _: unsafe extern "C" fn(ffi::types::psync_eventtype_t, ffi::types::psync_eventdata_t) =
             event_callback_trampoline;
         let _: unsafe extern "C" fn(u32, u32) = notification_callback_trampoline;
@@ -160,7 +160,7 @@ mod tests {
 
         // Test Cli default
         let cli = Cli::default();
-        assert!(cli.username.is_empty());
+        assert!(cli.username.is_none());
         assert!(!cli.password_prompt);
         assert!(!cli.daemonize);
 
@@ -179,7 +179,7 @@ mod tests {
 
         // Valid configuration
         let valid_cli = Cli {
-            username: "test@example.com".to_string(),
+            username: Some("test@example.com".to_string()),
             password_prompt: true,
             daemonize: true,
             ..Default::default()
@@ -188,7 +188,7 @@ mod tests {
 
         // Invalid: daemon and client mode together
         let invalid_cli = Cli {
-            username: "test@example.com".to_string(),
+            username: Some("test@example.com".to_string()),
             daemonize: true,
             commands_only: true,
             ..Default::default()
@@ -197,7 +197,7 @@ mod tests {
 
         // Invalid: passascrypto without password
         let invalid_cli2 = Cli {
-            username: "test@example.com".to_string(),
+            username: Some("test@example.com".to_string()),
             use_password_as_crypto: true,
             password_prompt: false,
             ..Default::default()
@@ -250,7 +250,7 @@ mod tests {
 
         // Test debug output is redacted
         let debug_output = format!("{:?}", password);
-        assert_eq!(debug_output, "[REDACTED]");
+        assert!(debug_output.contains("REDACTED"));
         assert!(!debug_output.contains("test123"));
 
         // Test display output is redacted

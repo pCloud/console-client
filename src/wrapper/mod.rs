@@ -82,10 +82,12 @@ mod auth;
 mod client;
 mod crypto;
 mod filesystem;
+pub mod weblogin;
 
 // Re-export the main types
 pub use client::{AuthState, CryptoState, PCloudClient};
 pub use filesystem::{SyncFolder, SyncType};
+pub use weblogin::{WebLoginConfig, WebLoginSession};
 
 #[cfg(test)]
 mod tests {

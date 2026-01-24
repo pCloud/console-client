@@ -27,21 +27,43 @@ use clap::Parser;
 /// This client allows you to access your pCloud storage through a FUSE
 /// filesystem mount, with support for encrypted folders (Crypto) and
 /// background daemon operation.
+///
+/// # Authentication
+///
+/// If no credentials are provided, an interactive prompt will offer:
+/// - Web-based login (opens browser with QR code)
+/// - Manual username/password entry
+/// - Auth token entry
 #[derive(Parser, Debug, Clone)]
 #[command(name = "pcloud")]
 #[command(version, about = "pCloud Console Client")]
 #[command(long_about = "Mount pCloud storage as a local filesystem.\n\n\
     This client allows you to access your pCloud storage through a FUSE \
     filesystem mount, with support for encrypted folders (Crypto) and \
-    background daemon operation.")]
+    background daemon operation.\n\n\
+    If no credentials are provided, an interactive authentication prompt \
+    will be displayed offering web-based login, manual credentials entry, \
+    or auth token input.")]
 pub struct Cli {
-    /// Username/email for pCloud account (required)
-    #[arg(short = 'u', long = "username", required = true)]
-    pub username: String,
+    /// Username/email for pCloud account
+    ///
+    /// Required for password authentication (-p) and new user registration (-n).
+    /// Optional when using token auth (-t) or web login.
+    #[arg(short = 'u', long = "username")]
+    pub username: Option<String>,
 
     /// Prompt for password (interactive)
+    ///
+    /// Requires -u/--username to be specified.
     #[arg(short = 'p', long = "password")]
     pub password_prompt: bool,
+
+    /// Use authentication token directly
+    ///
+    /// Bypasses username/password authentication.
+    /// The token can be obtained from pCloud account settings.
+    #[arg(short = 't', long = "token")]
+    pub auth_token: Option<String>,
 
     /// Prompt for crypto password (interactive)
     #[arg(short = 'c', long = "crypto")]
@@ -60,6 +82,8 @@ pub struct Cli {
     pub commands_mode: bool,
 
     /// Mountpoint for FUSE filesystem
+    ///
+    /// Defaults to ~/pCloud if not specified.
     #[arg(short = 'm', long = "mountpoint")]
     pub mountpoint: Option<PathBuf>,
 
@@ -71,7 +95,7 @@ pub struct Cli {
     #[arg(short = 'n', long = "newuser")]
     pub newuser: bool,
 
-    /// Save password for automatic login
+    /// Save credentials for automatic login
     #[arg(short = 's', long = "savepassword")]
     pub save_password: bool,
 }
@@ -79,8 +103,9 @@ pub struct Cli {
 impl Default for Cli {
     fn default() -> Self {
         Self {
-            username: String::new(),
+            username: None,
             password_prompt: false,
+            auth_token: None,
             crypto_prompt: false,
             use_password_as_crypto: false,
             daemonize: false,
@@ -152,7 +177,7 @@ impl Cli {
     /// use console_client::cli::Cli;
     ///
     /// let cli = Cli {
-    ///     username: "test@example.com".to_string(),
+    ///     username: Some("test@example.com".to_string()),
     ///     daemonize: true,
     ///     commands_only: true,  // Conflict!
     ///     ..Default::default()
@@ -166,6 +191,20 @@ impl Cli {
             return Err("Cannot use both --daemon and --client mode. \
                 Use --daemon to start a new background service, \
                 or --client to connect to an existing daemon."
+                .to_string());
+        }
+
+        // -p (password_prompt) requires -u (username)
+        if self.password_prompt && self.username.is_none() {
+            return Err("--password requires --username. \
+                Please provide a username with -u/--username."
+                .to_string());
+        }
+
+        // -n (newuser) requires -u (username) and -p (password)
+        if self.newuser && self.username.is_none() {
+            return Err("--newuser requires --username. \
+                Please provide a username with -u/--username."
                 .to_string());
         }
 
@@ -186,13 +225,14 @@ impl Cli {
                 .to_string());
         }
 
-        // -k (commands_only) typically requires -o (commands_mode) to be useful
-        // but we allow it without warning as the user may have other intentions
-
-        // -n (newuser) with -s (save_password) is valid - save after registration
-
-        // -d (daemon) without -m (mountpoint) is suspicious but may be valid
-        // for some use cases, so we don't enforce it
+        // -t (auth_token) conflicts with -p (password_prompt)
+        // Can't use both token and password authentication
+        if self.auth_token.is_some() && self.password_prompt {
+            return Err("Cannot use both --token and --password. \
+                Use --token for token authentication, \
+                or --password for username/password authentication."
+                .to_string());
+        }
 
         Ok(())
     }
@@ -224,16 +264,41 @@ impl Cli {
     /// Get the mountpoint, applying default if not specified.
     ///
     /// If no mountpoint is specified, returns the default mountpoint
-    /// based on the platform conventions.
+    /// which is ~/pCloud.
     pub fn get_mountpoint(&self) -> PathBuf {
-        self.mountpoint.clone().unwrap_or_else(|| {
-            // Default mountpoint follows pCloud conventions
-            if let Some(home) = std::env::var_os("HOME") {
-                PathBuf::from(home).join("pCloudDrive")
-            } else {
-                PathBuf::from("/tmp/pCloudDrive")
-            }
-        })
+        self.mountpoint.clone().unwrap_or_else(Self::default_mountpoint)
+    }
+
+    /// Get the default mountpoint path.
+    ///
+    /// Returns ~/pCloud if HOME is set, otherwise /tmp/pCloud.
+    pub fn default_mountpoint() -> PathBuf {
+        if let Some(home) = std::env::var_os("HOME") {
+            PathBuf::from(home).join("pCloud")
+        } else {
+            PathBuf::from("/tmp/pCloud")
+        }
+    }
+
+    /// Check if any authentication credentials are provided via CLI.
+    ///
+    /// Returns `true` if username+password, token, or other auth methods
+    /// are specified via command-line arguments.
+    pub fn has_cli_credentials(&self) -> bool {
+        self.password_prompt || self.auth_token.is_some()
+    }
+
+    /// Check if interactive authentication is needed.
+    ///
+    /// Returns `true` if no credentials are provided via CLI and
+    /// we need to prompt the user for authentication method.
+    pub fn needs_interactive_auth(&self) -> bool {
+        !self.has_cli_credentials() && !self.commands_only
+    }
+
+    /// Get the username, if provided.
+    pub fn get_username(&self) -> Option<&str> {
+        self.username.as_deref()
     }
 }
 
@@ -244,9 +309,16 @@ mod tests {
     #[test]
     fn test_parse_basic_args() {
         let cli = Cli::parse_from_args(["pcloud", "-u", "test@example.com"]);
-        assert_eq!(cli.username, "test@example.com");
+        assert_eq!(cli.username, Some("test@example.com".to_string()));
         assert!(!cli.password_prompt);
         assert!(!cli.daemonize);
+    }
+
+    #[test]
+    fn test_parse_no_args() {
+        // Username is now optional
+        let cli = Cli::parse_from_args(["pcloud"]);
+        assert!(cli.username.is_none());
     }
 
     #[test]
@@ -264,7 +336,7 @@ mod tests {
             "-n",
             "-s",
         ]);
-        assert_eq!(cli.username, "test@example.com");
+        assert_eq!(cli.username, Some("test@example.com".to_string()));
         assert!(cli.password_prompt);
         assert!(cli.crypto_prompt);
         assert!(cli.daemonize);
@@ -272,6 +344,17 @@ mod tests {
         assert_eq!(cli.mountpoint, Some(PathBuf::from("/mnt/pcloud")));
         assert!(cli.newuser);
         assert!(cli.save_password);
+    }
+
+    #[test]
+    fn test_parse_token_flag() {
+        let cli = Cli::parse_from_args([
+            "pcloud",
+            "-t",
+            "my-auth-token",
+        ]);
+        assert_eq!(cli.auth_token, Some("my-auth-token".to_string()));
+        assert!(cli.username.is_none());
     }
 
     #[test]
@@ -285,7 +368,7 @@ mod tests {
             "--mountpoint",
             "/home/user/cloud",
         ]);
-        assert_eq!(cli.username, "user@test.com");
+        assert_eq!(cli.username, Some("user@test.com".to_string()));
         assert!(cli.password_prompt);
         assert!(cli.daemonize);
         assert_eq!(cli.mountpoint, Some(PathBuf::from("/home/user/cloud")));
@@ -294,7 +377,7 @@ mod tests {
     #[test]
     fn test_conflicting_daemon_and_client() {
         let cli = Cli {
-            username: "test@test.com".to_string(),
+            username: Some("test@test.com".to_string()),
             daemonize: true,
             commands_only: true,
             ..Default::default()
@@ -305,9 +388,20 @@ mod tests {
     }
 
     #[test]
+    fn test_password_requires_username() {
+        let cli = Cli {
+            password_prompt: true,
+            ..Default::default()
+        };
+        let result = cli.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("username"));
+    }
+
+    #[test]
     fn test_passascrypto_requires_password() {
         let cli = Cli {
-            username: "test@test.com".to_string(),
+            username: Some("test@test.com".to_string()),
             use_password_as_crypto: true,
             password_prompt: false,
             ..Default::default()
@@ -320,7 +414,7 @@ mod tests {
     #[test]
     fn test_passascrypto_with_password_valid() {
         let cli = Cli {
-            username: "test@test.com".to_string(),
+            username: Some("test@test.com".to_string()),
             use_password_as_crypto: true,
             password_prompt: true,
             ..Default::default()
@@ -331,7 +425,7 @@ mod tests {
     #[test]
     fn test_crypto_and_passascrypto_conflict() {
         let cli = Cli {
-            username: "test@test.com".to_string(),
+            username: Some("test@test.com".to_string()),
             crypto_prompt: true,
             use_password_as_crypto: true,
             password_prompt: true,
@@ -343,9 +437,22 @@ mod tests {
     }
 
     #[test]
+    fn test_token_and_password_conflict() {
+        let cli = Cli {
+            username: Some("test@test.com".to_string()),
+            auth_token: Some("token".to_string()),
+            password_prompt: true,
+            ..Default::default()
+        };
+        let result = cli.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("--token"));
+    }
+
+    #[test]
     fn test_valid_daemon_with_mountpoint() {
         let cli = Cli {
-            username: "test@test.com".to_string(),
+            username: Some("test@test.com".to_string()),
             password_prompt: true,
             daemonize: true,
             mountpoint: Some(PathBuf::from("/mnt/pcloud")),
@@ -357,7 +464,6 @@ mod tests {
     #[test]
     fn test_client_mode_flag() {
         let cli = Cli {
-            username: "test@test.com".to_string(),
             commands_only: true,
             ..Default::default()
         };
@@ -367,42 +473,34 @@ mod tests {
     #[test]
     fn test_wants_crypto() {
         let cli1 = Cli {
-            username: "test@test.com".to_string(),
             crypto_prompt: true,
             ..Default::default()
         };
         assert!(cli1.wants_crypto());
 
         let cli2 = Cli {
-            username: "test@test.com".to_string(),
+            username: Some("test@test.com".to_string()),
             use_password_as_crypto: true,
             password_prompt: true,
             ..Default::default()
         };
         assert!(cli2.wants_crypto());
 
-        let cli3 = Cli {
-            username: "test@test.com".to_string(),
-            ..Default::default()
-        };
+        let cli3 = Cli::default();
         assert!(!cli3.wants_crypto());
     }
 
     #[test]
     fn test_default_mountpoint() {
-        let cli = Cli {
-            username: "test@test.com".to_string(),
-            ..Default::default()
-        };
+        let cli = Cli::default();
         let mountpoint = cli.get_mountpoint();
-        // Should end with pCloudDrive
-        assert!(mountpoint.to_string_lossy().ends_with("pCloudDrive"));
+        // Should end with pCloud (not pCloudDrive anymore)
+        assert!(mountpoint.to_string_lossy().ends_with("pCloud"));
     }
 
     #[test]
     fn test_custom_mountpoint() {
         let cli = Cli {
-            username: "test@test.com".to_string(),
             mountpoint: Some(PathBuf::from("/custom/path")),
             ..Default::default()
         };
@@ -410,16 +508,11 @@ mod tests {
     }
 
     #[test]
-    fn test_missing_username_fails() {
-        let result = Cli::try_parse_from_args(["pcloud"]);
-        assert!(result.is_err());
-    }
-
-    #[test]
     fn test_default_values() {
         let cli = Cli::default();
-        assert!(cli.username.is_empty());
+        assert!(cli.username.is_none());
         assert!(!cli.password_prompt);
+        assert!(cli.auth_token.is_none());
         assert!(!cli.crypto_prompt);
         assert!(!cli.use_password_as_crypto);
         assert!(!cli.daemonize);
@@ -428,5 +521,65 @@ mod tests {
         assert!(!cli.commands_only);
         assert!(!cli.newuser);
         assert!(!cli.save_password);
+    }
+
+    #[test]
+    fn test_has_cli_credentials() {
+        let cli1 = Cli {
+            password_prompt: true,
+            username: Some("test".to_string()),
+            ..Default::default()
+        };
+        assert!(cli1.has_cli_credentials());
+
+        let cli2 = Cli {
+            auth_token: Some("token".to_string()),
+            ..Default::default()
+        };
+        assert!(cli2.has_cli_credentials());
+
+        let cli3 = Cli::default();
+        assert!(!cli3.has_cli_credentials());
+    }
+
+    #[test]
+    fn test_needs_interactive_auth() {
+        // No credentials = needs interactive
+        let cli1 = Cli::default();
+        assert!(cli1.needs_interactive_auth());
+
+        // Has password = doesn't need interactive
+        let cli2 = Cli {
+            password_prompt: true,
+            username: Some("test".to_string()),
+            ..Default::default()
+        };
+        assert!(!cli2.needs_interactive_auth());
+
+        // Has token = doesn't need interactive
+        let cli3 = Cli {
+            auth_token: Some("token".to_string()),
+            ..Default::default()
+        };
+        assert!(!cli3.needs_interactive_auth());
+
+        // Client mode = doesn't need interactive
+        let cli4 = Cli {
+            commands_only: true,
+            ..Default::default()
+        };
+        assert!(!cli4.needs_interactive_auth());
+    }
+
+    #[test]
+    fn test_get_username() {
+        let cli1 = Cli {
+            username: Some("test@example.com".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(cli1.get_username(), Some("test@example.com"));
+
+        let cli2 = Cli::default();
+        assert_eq!(cli2.get_username(), None);
     }
 }

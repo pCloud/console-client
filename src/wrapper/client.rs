@@ -544,6 +544,92 @@ impl PCloudClient {
     pub(crate) fn set_crypto_state(&mut self, state: CryptoState) {
         self.crypto_state = state;
     }
+
+    // =========================================================================
+    // Web Login Methods
+    // =========================================================================
+
+    /// Initiate a web-based login session.
+    ///
+    /// This requests a login session ID from the server and constructs a URL
+    /// that the user can open in their browser to authenticate.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Configuration for the web login session
+    ///
+    /// # Returns
+    ///
+    /// A `WebLoginSession` containing the request ID and login URL.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use console_client::wrapper::{PCloudClient, WebLoginConfig};
+    ///
+    /// let client = PCloudClient::init()?;
+    /// let mut guard = client.lock().unwrap();
+    ///
+    /// let session = guard.initiate_web_login(&WebLoginConfig::default())?;
+    /// println!("Open this URL: {}", session.login_url);
+    /// ```
+    pub fn initiate_web_login(
+        &mut self,
+        config: &super::weblogin::WebLoginConfig,
+    ) -> Result<super::weblogin::WebLoginSession> {
+        self.auth_state = AuthState::Authenticating;
+        super::weblogin::initiate_web_login(config)
+    }
+
+    /// Wait for web authentication to complete.
+    ///
+    /// This blocks until the user completes authentication in the browser
+    /// or a timeout occurs (approximately 5 minutes).
+    ///
+    /// On success, the auth token is automatically set in the pclsync library.
+    ///
+    /// # Arguments
+    ///
+    /// * `request_id` - The request ID from `initiate_web_login()`
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // After calling initiate_web_login and displaying the URL to the user...
+    /// guard.wait_for_web_auth(&session.request_id)?;
+    /// println!("Authentication successful!");
+    /// ```
+    pub fn wait_for_web_auth(&mut self, request_id: &str) -> Result<()> {
+        match super::weblogin::wait_for_web_auth(request_id) {
+            Ok(()) => {
+                self.auth_state = AuthState::Authenticated;
+                Ok(())
+            }
+            Err(e) => {
+                self.auth_state = AuthState::Failed(e.to_string());
+                Err(e)
+            }
+        }
+    }
+
+    /// Check if credentials are already saved in the database.
+    ///
+    /// This checks if an auth token exists that can be used for automatic login.
+    ///
+    /// # Returns
+    ///
+    /// `true` if saved credentials exist, `false` otherwise.
+    pub fn has_saved_credentials(&self) -> bool {
+        // Check if we have a saved auth string
+        let auth_ptr = unsafe { raw::psync_get_auth_string() };
+        if auth_ptr.is_null() {
+            return false;
+        }
+
+        // Check if the auth string is non-empty
+        let auth_str = unsafe { std::ffi::CStr::from_ptr(auth_ptr) };
+        !auth_str.to_bytes().is_empty()
+    }
 }
 
 impl Drop for PCloudClient {

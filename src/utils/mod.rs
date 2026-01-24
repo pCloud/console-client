@@ -3,16 +3,27 @@
 //! This module provides:
 //! - C string conversion utilities
 //! - Path handling helpers
-//! - Other common utilities
+//! - Terminal output utilities
+//! - QR code generation
+//! - Browser opening utilities
 //!
 //! # Submodules
 //!
 //! - `cstring`: C string conversion helpers for FFI operations
+//! - `terminal`: Rich terminal output (boxes, status indicators)
+//! - `qrcode`: QR code generation for terminal display
+//! - `browser`: Browser opening utilities
 
+pub mod browser;
 pub mod cstring;
+pub mod qrcode;
+pub mod terminal;
 
 // Re-export commonly used items from cstring module
 pub use cstring::{from_cstr_owned, from_cstr_ref, to_cstring, try_to_cstring};
+
+// Re-export commonly used terminal utilities
+pub use terminal::{print_boxed, print_status, StatusIndicator};
 
 use std::ffi::CStr;
 use std::os::raw::c_char;

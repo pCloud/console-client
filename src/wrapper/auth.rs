@@ -527,7 +527,7 @@ mod tests {
     #[test]
     fn test_secret_password_not_debug_printed() {
         // Verify that SecretString doesn't leak password in debug output
-        let password = Secret::new("super_secret_password".to_string());
+        let password = SecretString::from("super_secret_password".to_string());
         let debug_output = format!("{:?}", password);
 
         // The debug output should NOT contain the actual password

@@ -423,6 +423,67 @@ extern "C" {
 }
 
 // ============================================================================
+// Web Login Functions
+// ============================================================================
+
+extern "C" {
+    /// Get a request ID for web-based login.
+    ///
+    /// This initiates a web login session and returns a request ID that can be
+    /// used to construct the login URL and to poll for authentication completion.
+    ///
+    /// # Arguments
+    ///
+    /// * `req_id` - On success, set to point to the request ID string (must be freed)
+    ///
+    /// # Returns
+    ///
+    /// - `0` on success
+    /// - `-1` on network error
+    /// - Positive API error code on other errors
+    ///
+    /// # Safety
+    ///
+    /// `req_id` must be a valid pointer. On success, `*req_id` must be freed with `psync_free()`.
+    pub fn get_login_req_id(req_id: *mut *mut c_char) -> c_int;
+
+    /// Wait for authentication token after web login.
+    ///
+    /// Blocks until the user completes authentication in the browser or timeout occurs.
+    /// On success, the auth token is automatically set in the library.
+    ///
+    /// # Arguments
+    ///
+    /// * `request_id` - The request ID obtained from `get_login_req_id()`
+    ///
+    /// # Returns
+    ///
+    /// - `0` on success (token auto-set)
+    /// - `-1` on network error
+    /// - Positive API error code on other errors (e.g., timeout)
+    ///
+    /// # Safety
+    ///
+    /// `request_id` must be a valid null-terminated C string.
+    pub fn wait_auth_token(request_id: *const c_char) -> c_int;
+
+    /// Get the machine name (hostname).
+    ///
+    /// Uses platform-specific methods to get a human-readable machine name.
+    /// On Linux, this typically reads from /etc/hostname or uses gethostname().
+    ///
+    /// # Returns
+    ///
+    /// A psync_strdup'd string containing the machine name, or NULL on error.
+    /// The returned pointer must be freed with `psync_free()`.
+    ///
+    /// # Safety
+    ///
+    /// The returned pointer must be freed by the caller.
+    pub fn get_machine_name() -> *mut c_char;
+}
+
+// ============================================================================
 // Sync Folder Management
 // ============================================================================
 

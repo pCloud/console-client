@@ -23,6 +23,10 @@ pub enum PCloudError {
     #[error("Authentication error: {0}")]
     Auth(#[from] AuthError),
 
+    /// Web login error
+    #[error("Web login error: {0}")]
+    WebLogin(#[from] WebLoginError),
+
     /// Crypto (encryption) operation error
     #[error("Crypto error: {0}")]
     Crypto(#[from] CryptoError),
@@ -130,6 +134,38 @@ pub enum AuthError {
     /// Generic authentication error with message
     #[error("Authentication error: {0}")]
     Other(String),
+}
+
+/// Web login errors.
+#[derive(Error, Debug)]
+pub enum WebLoginError {
+    /// Failed to get request ID for web login
+    #[error("Failed to get web login request ID: {0}")]
+    RequestIdFailed(String),
+
+    /// Web login timed out waiting for user authentication
+    #[error("Web login timed out - user did not complete authentication")]
+    Timeout,
+
+    /// Network error during web login
+    #[error("Network error during web login")]
+    NetworkError,
+
+    /// Failed to build login URL
+    #[error("Failed to build login URL: {0}")]
+    UrlBuildError(String),
+
+    /// User cancelled the web login
+    #[error("Web login cancelled by user")]
+    Cancelled,
+
+    /// Browser could not be opened
+    #[error("Failed to open browser: {0}")]
+    BrowserOpenFailed(String),
+
+    /// Unknown web login error
+    #[error("Web login error (code: {0})")]
+    Unknown(i32),
 }
 
 /// Crypto (encryption) operation errors.
@@ -872,6 +908,39 @@ mod tests {
     }
 
     // =========================================================================
+    // Web Login Error Tests
+    // =========================================================================
+
+    #[test]
+    fn test_weblogin_error_variants() {
+        assert!(WebLoginError::Timeout.to_string().contains("timed out"));
+        assert!(WebLoginError::NetworkError.to_string().contains("Network"));
+        assert!(WebLoginError::Cancelled.to_string().contains("cancelled"));
+    }
+
+    #[test]
+    fn test_weblogin_error_with_message() {
+        let err = WebLoginError::RequestIdFailed("server error".to_string());
+        assert!(err.to_string().contains("server error"));
+
+        let err = WebLoginError::UrlBuildError("invalid params".to_string());
+        assert!(err.to_string().contains("invalid params"));
+
+        let err = WebLoginError::BrowserOpenFailed("no display".to_string());
+        assert!(err.to_string().contains("no display"));
+
+        let err = WebLoginError::Unknown(42);
+        assert!(err.to_string().contains("42"));
+    }
+
+    #[test]
+    fn test_pcloud_error_from_weblogin() {
+        let weblogin_err = WebLoginError::Timeout;
+        let pcloud_err: PCloudError = weblogin_err.into();
+        assert!(matches!(pcloud_err, PCloudError::WebLogin(_)));
+    }
+
+    // =========================================================================
     // Error Chain Tests
     // =========================================================================
 
@@ -884,6 +953,7 @@ mod tests {
         assert_send_sync::<CryptoError>();
         assert_send_sync::<FilesystemError>();
         assert_send_sync::<DaemonError>();
+        assert_send_sync::<WebLoginError>();
     }
 
     #[test]
