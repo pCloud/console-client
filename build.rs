@@ -3,7 +3,7 @@
 //! This script:
 //! - Detects the target platform (Linux/macOS)
 //! - Compiles all pclsync .c source files
-//! - Links required system libraries (fuse, sqlite3, pthread, wolfssl, zlib)
+//! - Links required system libraries (fuse, sqlite3, pthread, openssl, zlib)
 //! - Sets up include paths for C headers
 //! - Generates Rust bindings for C structs using bindgen
 //!
@@ -11,17 +11,17 @@
 //!
 //! ## Linux (Debian/Ubuntu)
 //! ```bash
-//! sudo apt-get install libfuse-dev libsqlite3-dev libwolfssl-dev zlib1g-dev libclang-dev
+//! sudo apt-get install libfuse-dev libsqlite3-dev libssl-dev zlib1g-dev libclang-dev
 //! ```
 //!
 //! ## Linux (Fedora/RHEL)
 //! ```bash
-//! sudo dnf install fuse-devel sqlite-devel wolfssl-devel zlib-devel clang-devel
+//! sudo dnf install fuse-devel sqlite-devel openssl-devel zlib-devel clang-devel
 //! ```
 //!
 //! ## macOS
 //! ```bash
-//! brew install macfuse sqlite wolfssl llvm
+//! brew install macfuse sqlite openssl llvm
 //! ```
 
 use std::env;
@@ -46,12 +46,20 @@ fn main() {
 
     // Common compiler flags
     build
-        .warnings(true)
-        //.flag_if_supported("-Wall")
+        .warnings(false)
+        .std("gnu99")
         .flag_if_supported("-Wpointer-arith")
         .opt_level(2)
         .flag_if_supported("-fno-stack-protector")
         .flag_if_supported("-fomit-frame-pointer");
+
+    // Set DEBUG_LEVEL for debug builds (D_NOTICE = 50)
+    let profile = env::var("PROFILE").unwrap_or_default();
+    if profile == "debug" {
+        build.define("DEBUG_LEVEL", "50"); // D_NOTICE
+    } else if profile == "release" {
+        build.define("DEBUG_LEVEL", "30"); // D_ERROR
+    }
 
     // Include path for pclsync headers
     build.include(&pclsync_dir);
@@ -92,13 +100,13 @@ fn main() {
         "pp2p.c",
         "pcrypto.c",
         "pssl.c",
+        "pssl-openssl3.c",
         "pfileops.c",
         "ptree.c",
         "ppassword.c",
         "prunratelimit.c",
         "pmemlock.c",
         "pnotifications.c",
-        // New files in updated pclsync
         "pexternalstatus.c",
         "publiclinks.c",
         "pbusinessaccount.c",
@@ -275,22 +283,14 @@ fn generate_bindings(pclsync_dir: &PathBuf, out_dir: &PathBuf, target_os: &str) 
     eprintln!("Generated bindings at {:?}", bindings_path);
 }
 
-fn configure_linux(build: &mut cc::Build, pclsync_dir: &PathBuf) {
+fn configure_linux(build: &mut cc::Build, _pclsync_dir: &PathBuf) {
     // Define Linux platform
     build.define("P_OS_LINUX", None);
     // Note: _GNU_SOURCE is defined in pcompat.h, so we don't need to define it again
     build.define("_FILE_OFFSET_BITS", "64");
 
-    // Use WolfSSL on Linux
-    build.define("P_SSL_WOLFSSL", None);
-
-    // Add WolfSSL SSL implementation
-    let ssl_source = pclsync_dir.join("pssl-wolfssl.c");
-    if ssl_source.exists() {
-        build.file(&ssl_source);
-    } else {
-        panic!("pssl-wolfssl.c not found at {:?}", ssl_source);
-    }
+    // Use OpenSSL 3.x on Linux
+    build.define("P_SSL_OPENSSL3", None);
 
     // Note: poverlay_lin.c is included via #include in poverlay.c,
     // so we don't compile it separately
@@ -322,45 +322,21 @@ fn configure_linux(build: &mut cc::Build, pclsync_dir: &PathBuf) {
         eprintln!("Hint: Install libfuse-dev (Debian/Ubuntu) or fuse-devel (Fedora/RHEL)");
     }
 
-    // Try to find WolfSSL include path using pkg-config
-    match pkg_config::Config::new().probe("wolfssl") {
-        Ok(wolfssl) => {
-            for include in &wolfssl.include_paths {
+    // Try to find OpenSSL include path using pkg-config
+    match pkg_config::Config::new().probe("openssl") {
+        Ok(openssl) => {
+            for include in &openssl.include_paths {
                 build.include(include);
-                // WolfSSL headers are often in a wolfssl subdirectory
-                let wolfssl_subdir = PathBuf::from(include).join("wolfssl");
-                if wolfssl_subdir.exists() {
-                    build.include(&wolfssl_subdir);
-                }
             }
         }
         Err(e) => {
-            eprintln!("Warning: pkg-config failed to find wolfssl: {}", e);
-            eprintln!("Hint: Install libwolfssl-dev (Debian/Ubuntu) or wolfssl-devel (Fedora/RHEL)");
-            // Try common fallback paths
-            let fallback_paths = [
-                "/usr/include/wolfssl",
-                "/usr/local/include/wolfssl",
-            ];
-            for path in &fallback_paths {
-                let p = PathBuf::from(path);
-                if p.exists() {
-                    build.include(path);
-                    break;
-                }
-            }
-        }
-    }
-
-    // Try to find zlib include path
-    if let Ok(zlib) = pkg_config::Config::new().probe("zlib") {
-        for include in &zlib.include_paths {
-            build.include(include);
+            eprintln!("Warning: pkg-config failed to find openssl: {}", e);
+            eprintln!("Hint: Install libssl-dev (Debian/Ubuntu) or openssl-devel (Fedora/RHEL)");
         }
     }
 }
 
-fn configure_macos(build: &mut cc::Build, pclsync_dir: &PathBuf) {
+fn configure_macos(build: &mut cc::Build, _pclsync_dir: &PathBuf) {
     // Define macOS platform
     build.define("P_OS_MACOSX", None);
     build.define("P_OS_BSD", None);
@@ -368,16 +344,8 @@ fn configure_macos(build: &mut cc::Build, pclsync_dir: &PathBuf) {
     build.define("_DARWIN_USE_64_BIT_INODE", None);
     build.define("_FILE_OFFSET_BITS", "64");
 
-    // Use WolfSSL on macOS
-    build.define("P_SSL_WOLFSSL", None);
-
-    // Add WolfSSL SSL implementation
-    let ssl_source = pclsync_dir.join("pssl-wolfssl.c");
-    if ssl_source.exists() {
-        build.file(&ssl_source);
-    } else {
-        panic!("pssl-wolfssl.c not found at {:?}", ssl_source);
-    }
+    // Use OpenSSL 3.x on macOS
+    build.define("P_SSL_OPENSSL3", None);
 
     // Note: poverlay_mac.c is included via #include in poverlay.c,
     // so we don't compile it separately
@@ -389,25 +357,21 @@ fn configure_macos(build: &mut cc::Build, pclsync_dir: &PathBuf) {
         }
     }
 
-    // Try to find WolfSSL include path using pkg-config
-    if let Ok(wolfssl) = pkg_config::Config::new().probe("wolfssl") {
-        for include in &wolfssl.include_paths {
+    // Try to find OpenSSL include path using pkg-config
+    if let Ok(openssl) = pkg_config::Config::new().probe("openssl") {
+        for include in &openssl.include_paths {
             build.include(include);
-            // WolfSSL headers are often in a wolfssl subdirectory
-            let wolfssl_subdir = PathBuf::from(include).join("wolfssl");
-            if wolfssl_subdir.exists() {
-                build.include(&wolfssl_subdir);
-            }
         }
     } else {
-        // Fall back to common Homebrew paths for WolfSSL
-        let wolfssl_include_paths = [
-            "/usr/local/opt/wolfssl/include",
-            "/opt/homebrew/opt/wolfssl/include",
-            "/usr/local/include/wolfssl",
+        // Fall back to common Homebrew paths for OpenSSL
+        let openssl_include_paths = [
+            "/usr/local/opt/openssl/include",
+            "/opt/homebrew/opt/openssl/include",
+            "/usr/local/opt/openssl@3/include",
+            "/opt/homebrew/opt/openssl@3/include",
         ];
 
-        for path in &wolfssl_include_paths {
+        for path in &openssl_include_paths {
             let p = PathBuf::from(path);
             if p.exists() {
                 build.include(path);
@@ -451,8 +415,14 @@ fn link_system_libraries(target_os: &str) {
             // Use pkg-config to find libraries when available
             link_with_pkgconfig_or_fallback("fuse", "fuse");
             link_with_pkgconfig_or_fallback("sqlite3", "sqlite3");
-            link_with_pkgconfig_or_fallback("wolfssl", "wolfssl");
-            // Note: pclsync now uses embedded miniz instead of system zlib
+            link_with_pkgconfig_or_fallback("openssl", "ssl");
+            // OpenSSL needs both libssl and libcrypto
+            if pkg_config::Config::new().probe("openssl").is_err() {
+                println!("cargo:rustc-link-lib=crypto");
+            }
+
+            // zlib for pcompression.c (deflate/inflate)
+            link_with_pkgconfig_or_fallback("zlib", "z");
 
             // libudev for device monitoring
             link_with_pkgconfig_or_fallback("libudev", "udev");
@@ -480,15 +450,16 @@ fn link_system_libraries(target_os: &str) {
             // SQLite3
             link_with_pkgconfig_or_fallback("sqlite3", "sqlite3");
 
-            // WolfSSL
-            if pkg_config::Config::new().probe("wolfssl").is_err() {
-                println!("cargo:rustc-link-lib=wolfssl");
-                // Homebrew WolfSSL paths
-                println!("cargo:rustc-link-search=/usr/local/opt/wolfssl/lib");
-                println!("cargo:rustc-link-search=/opt/homebrew/opt/wolfssl/lib");
+            // OpenSSL 3.x
+            if pkg_config::Config::new().probe("openssl").is_err() {
+                println!("cargo:rustc-link-lib=ssl");
+                println!("cargo:rustc-link-lib=crypto");
+                // Homebrew OpenSSL paths
+                println!("cargo:rustc-link-search=/usr/local/opt/openssl/lib");
+                println!("cargo:rustc-link-search=/opt/homebrew/opt/openssl/lib");
+                println!("cargo:rustc-link-search=/usr/local/opt/openssl@3/lib");
+                println!("cargo:rustc-link-search=/opt/homebrew/opt/openssl@3/lib");
             }
-
-            // Note: pclsync now uses embedded miniz instead of system zlib
 
             // Cocoa framework for macOS
             println!("cargo:rustc-link-lib=framework=Cocoa");
@@ -497,7 +468,8 @@ fn link_system_libraries(target_os: &str) {
             // Fallback: try to link common libraries
             println!("cargo:rustc-link-lib=fuse");
             println!("cargo:rustc-link-lib=sqlite3");
-            println!("cargo:rustc-link-lib=wolfssl");
+            println!("cargo:rustc-link-lib=ssl");
+            println!("cargo:rustc-link-lib=crypto");
             println!("cargo:rustc-link-lib=udev");
             println!("cargo:rustc-link-lib=pthread");
             println!("cargo:rustc-link-lib=m");

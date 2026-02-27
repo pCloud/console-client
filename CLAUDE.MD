@@ -80,17 +80,17 @@ src/
 ```bash
 # Debian/Ubuntu
 sudo apt-get install build-essential libfuse-dev libsqlite3-dev \
-  libwolfssl-dev libudev-dev libclang-dev
+  libssl-dev libudev-dev libclang-dev
 
 # Fedora/RHEL
-sudo dnf install gcc fuse-devel sqlite-devel wolfssl-devel \
+sudo dnf install gcc fuse-devel sqlite-devel openssl-devel \
   systemd-devel clang-devel
 
 # Arch Linux
-sudo pacman -S base-devel fuse2 sqlite wolfssl systemd-libs clang
+sudo pacman -S base-devel fuse2 sqlite openssl systemd-libs clang
 
 # macOS
-brew install macfuse sqlite wolfssl llvm
+brew install macfuse sqlite openssl llvm
 ```
 
 ### Build Commands
@@ -116,13 +116,12 @@ cargo install --path .
 
 The build script:
 1. Compiles all pclsync C source files using the `cc` crate
-2. Links system libraries (fuse, sqlite3, wolfssl, udev, pthread)
+2. Links system libraries (fuse, sqlite3, openssl, udev, pthread)
 3. Generates Rust bindings for C structs using `bindgen`
 4. Detects platform (Linux/macOS) for conditional compilation
 
 Notes:
-- pclsync uses WolfSSL for TLS (not OpenSSL)
-- pclsync includes embedded miniz for compression (no system zlib needed)
+- pclsync uses OpenSSL3.x for TLS
 - Key dependencies are found via pkg-config when available
 
 ## Testing Instructions

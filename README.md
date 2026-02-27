@@ -23,8 +23,8 @@ sudo apt-get install \
   build-essential \
   libfuse-dev \
   libsqlite3-dev \
-  libwolfssl-dev \
-  libudev-dev \
+  libssl-dev \
+  zlib1g-dev \
   libclang-dev
 ```
 
@@ -35,8 +35,9 @@ sudo dnf install \
   gcc \
   fuse-devel \
   sqlite-devel \
-  wolfssl-devel \
+  openssl-devel \
   systemd-devel \
+  zlib-devel \
   clang-devel
 ```
 
@@ -47,7 +48,7 @@ sudo pacman -S \
   base-devel \
   fuse2 \
   sqlite \
-  wolfssl \
+  openssl \
   systemd-libs \
   clang
 ```
@@ -55,7 +56,7 @@ sudo pacman -S \
 ### macOS
 
 ```bash
-brew install macfuse sqlite wolfssl llvm
+brew install macfuse sqlite openssl llvm
 ```
 
 **Note**: macFUSE requires a system extension. After installation, you may need to:
