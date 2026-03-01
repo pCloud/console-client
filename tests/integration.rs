@@ -23,4 +23,8 @@
 //! cargo test --test integration -- --nocapture
 //! ```
 
-mod integration;
+mod integration {
+    mod cli_tests;
+    mod daemon_tests;
+    mod ipc_tests;
+}

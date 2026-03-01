@@ -246,7 +246,8 @@ fn test_pid_and_socket_share_uid() {
     let config = DaemonConfig::default();
 
     let pid_str = config.pid_file.to_string_lossy();
-    let sock_str = config.socket_path().to_string_lossy();
+    let sock_path = config.socket_path();
+    let sock_str = sock_path.to_string_lossy();
 
     // Extract UID from both paths - they should match
     // Format: /tmp/pcloud-{uid}.pid and /tmp/pcloud-{uid}.sock
