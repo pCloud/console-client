@@ -129,6 +129,35 @@ impl PCloudClient {
     // Filesystem Mount Operations
     // ========================================================================
 
+    /// Set the filesystem root path without starting the FUSE filesystem.
+    ///
+    /// This should be called before `start_sync()`, which will mount the
+    /// filesystem automatically at the configured path.
+    ///
+    /// # Arguments
+    ///
+    /// * `mountpoint` - Path where the filesystem will be mounted.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the path is not valid UTF-8.
+    pub fn set_fs_root(&mut self, mountpoint: impl AsRef<Path>) -> Result<()> {
+        let path = mountpoint.as_ref();
+        let path_str = path
+            .to_str()
+            .ok_or(PCloudError::Filesystem(FilesystemError::InvalidPath))?;
+        let c_path = try_to_cstring(path_str)?;
+        let key = try_to_cstring("fsroot")?;
+
+        // Safety: psync_set_string_value is safe to call with valid C strings.
+        // The C library makes its own copy of the value.
+        unsafe {
+            raw::psync_set_string_value(key.as_ptr(), c_path.as_ptr());
+        }
+
+        Ok(())
+    }
+
     /// Mount the pCloud filesystem at the specified mountpoint.
     ///
     /// This starts the FUSE virtual filesystem, allowing pCloud files to be
@@ -271,7 +300,7 @@ impl PCloudClient {
     /// `true` if the FUSE filesystem is mounted, `false` otherwise.
     pub fn is_fs_mounted(&self) -> bool {
         // Safety: psync_fs_isstarted is safe to call anytime
-        unsafe { raw::psync_fs_isstarted() != 0 }
+        unsafe { raw::psync_fs_isstarted() == 1 }
     }
 
     /// Get the current filesystem mountpoint from the C library.

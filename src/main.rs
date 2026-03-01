@@ -223,13 +223,28 @@ fn run_foreground_mode(cli: Cli) -> Result<()> {
         }
     };
 
-    // 5. Start sync to begin the connection
+    // 5. Prepare mountpoint before starting sync (psync_start_sync mounts the FS)
+    let mountpoint = cli.get_mountpoint();
     {
         let mut client_guard = client
             .lock()
             .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
-        client_guard.start_sync(Some(status_callback_trampoline), None);
-        print_status(StatusIndicator::Info, "Sync started");
+
+        // Create mountpoint directory if it doesn't exist
+        if !mountpoint.exists() {
+            print_status(
+                StatusIndicator::Info,
+                &format!("Creating mountpoint: {}", mountpoint.display()),
+            );
+            std::fs::create_dir_all(&mountpoint).map_err(PCloudError::Io)?;
+        }
+
+        // Set the filesystem root before starting sync
+        client_guard.set_fs_root(&mountpoint)?;
+        print_status(
+            StatusIndicator::Info,
+            &format!("Filesystem root set to: {}", mountpoint.display()),
+        );
     }
 
     // 6. Handle crypto setup/start if requested
@@ -258,36 +273,23 @@ fn run_foreground_mode(cli: Cli) -> Result<()> {
         }
     }
 
-    // 7. Get mount path (use default ~/pCloud if not specified)
-    let mountpoint = cli.get_mountpoint();
-
-    // 8. Mount filesystem
+    // 7. Start sync (this also mounts the FUSE filesystem at the configured fsroot)
     {
         let mut client_guard = client
             .lock()
             .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
+        client_guard.start_sync(Some(status_callback_trampoline), None);
+        print_status(StatusIndicator::Info, "Sync started");
 
-        // Create mountpoint directory if it doesn't exist
-        if !mountpoint.exists() {
-            print_status(
-                StatusIndicator::Info,
-                &format!("Creating mountpoint: {}", mountpoint.display()),
-            );
-            std::fs::create_dir_all(&mountpoint).map_err(PCloudError::Io)?;
-        }
-
-        print_status(
-            StatusIndicator::Info,
-            &format!("Mounting filesystem at: {}", mountpoint.display()),
-        );
-        client_guard.mount_filesystem(&mountpoint)?;
+        // Refresh mount state — psync_start_sync already mounted the filesystem
+        client_guard.refresh_mount_state();
         print_status(
             StatusIndicator::Success,
             &format!("Mounted pCloud at: {}", mountpoint.display()),
         );
     }
 
-    // 9. Enter command loop if interactive mode, otherwise wait for signals
+    // 8. Enter command loop if interactive mode, otherwise wait for signals
     if cli.commands_mode {
         println!("\nEntering interactive mode. Type 'help' for available commands.");
         run_command_loop(Arc::clone(&client))?;
@@ -771,12 +773,20 @@ fn run_daemon_mode(cli: Cli) -> Result<()> {
         client_guard.set_auth_token(token, cli.save_password)?;
     }
 
-    // Start sync
+    // Prepare mountpoint before starting sync (psync_start_sync mounts the FS)
+    let mountpoint = cli.get_mountpoint();
     {
         let mut client_guard = client
             .lock()
             .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
-        client_guard.start_sync(Some(status_callback_trampoline), None);
+
+        // Create mountpoint directory if it doesn't exist
+        if !mountpoint.exists() {
+            std::fs::create_dir_all(&mountpoint).map_err(PCloudError::Io)?;
+        }
+
+        // Set the filesystem root before starting sync
+        client_guard.set_fs_root(&mountpoint)?;
     }
 
     // Handle crypto setup/start if requested
@@ -798,19 +808,15 @@ fn run_daemon_mode(cli: Cli) -> Result<()> {
         client_guard.start_crypto(&crypto_secret)?;
     }
 
-    // Mount filesystem (use default path if not specified)
-    let mountpoint = cli.get_mountpoint();
+    // Start sync (this also mounts the FUSE filesystem at the configured fsroot)
     {
         let mut client_guard = client
             .lock()
             .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
+        client_guard.start_sync(Some(status_callback_trampoline), None);
 
-        // Create mountpoint directory if it doesn't exist
-        if !mountpoint.exists() {
-            std::fs::create_dir_all(&mountpoint).map_err(PCloudError::Io)?;
-        }
-
-        client_guard.mount_filesystem(&mountpoint)?;
+        // Refresh mount state — psync_start_sync already mounted the filesystem
+        client_guard.refresh_mount_state();
     }
 
     // Start IPC server in a separate thread

@@ -51,7 +51,12 @@ fn main() {
         .flag_if_supported("-Wpointer-arith")
         .opt_level(2)
         .flag_if_supported("-fno-stack-protector")
-        .flag_if_supported("-fomit-frame-pointer");
+        .flag_if_supported("-fomit-frame-pointer")
+        // GCC 14+ compiler demotion of certain warnings.
+        .flag_if_supported("-Wno-error=int-conversion")
+        .flag_if_supported("-Wno-error=incompatible-pointer-types")
+        .define("PSYNC_DEFAULT_POSIX_SUBDIR", "\"cli\"");
+
 
     // Set DEBUG_LEVEL for debug builds (D_NOTICE = 50)
     let profile = env::var("PROFILE").unwrap_or_default();
@@ -313,12 +318,8 @@ fn configure_linux(build: &mut cc::Build, _pclsync_dir: &PathBuf) {
         for include in &fuse.include_paths {
             build.include(include);
         }
-    } else if let Ok(fuse3) = pkg_config::Config::new().probe("fuse3") {
-        for include in &fuse3.include_paths {
-            build.include(include);
-        }
     } else {
-        eprintln!("Warning: pkg-config failed to find fuse or fuse3");
+        eprintln!("Warning: pkg-config failed to find fuse");
         eprintln!("Hint: Install libfuse-dev (Debian/Ubuntu) or fuse-devel (Fedora/RHEL)");
     }
 
