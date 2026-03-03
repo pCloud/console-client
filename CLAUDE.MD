@@ -73,6 +73,14 @@ src/
     +-- cstring.rs       # C string conversion helpers
 ```
 
+## Key Files Outside `src/`
+
+- `Cargo.toml` -- dependency versions, binary name, packaging metadata (deb, rpm)
+- `build.rs` -- pclsync C library compilation and linking
+- `pclsync/` -- git submodule containing the C library source
+- `LICENSE` -- BSD-3-Clause license text
+- `pkg/arch/PKGBUILD` -- Arch Linux package build script
+
 ## Build Instructions
 
 ### Prerequisites
@@ -123,6 +131,32 @@ The build script:
 Notes:
 - pclsync uses OpenSSL3.x for TLS
 - Key dependencies are found via pkg-config when available
+
+### Packaging
+
+Linux packages can be built with the following tools:
+
+| Format | Tool | Config location |
+|--------|------|-----------------|
+| .deb (Debian/Ubuntu) | `cargo-deb` | `[package.metadata.deb]` in `Cargo.toml` |
+| .rpm (Fedora/RHEL) | `cargo-generate-rpm` | `[package.metadata.generate-rpm]` in `Cargo.toml` |
+| Arch Linux (PKGBUILD) | `makepkg` | `pkg/arch/PKGBUILD` |
+
+Build commands:
+
+```bash
+# .deb package
+cargo install cargo-deb && cargo deb
+
+# .rpm package
+cargo install cargo-generate-rpm && cargo build --release && cargo generate-rpm
+
+# Arch Linux package
+cd pkg/arch && makepkg -si
+```
+
+All packages install the binary to `/usr/bin/pcloud` and include the `LICENSE` file.
+Runtime dependencies vary by format but cover: FUSE, SQLite, OpenSSL/TLS, zlib, and udev/systemd-libs.
 
 ## Testing Instructions
 

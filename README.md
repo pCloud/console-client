@@ -69,7 +69,7 @@ brew install macfuse sqlite openssl llvm
 ### Clone with Submodules
 
 ```bash
-git clone --recursive https://github.com/youruser/console-client.git
+git clone --recursive https://github.com/pCloud/console-client.git
 cd console-client
 ```
 
@@ -102,6 +102,45 @@ cargo install --path .
 # Or copy manually
 sudo cp target/release/pcloud /usr/local/bin/
 ```
+
+### Linux Packages
+
+Pre-built packages can be produced for Debian/Ubuntu, Fedora/RHEL, and Arch Linux.
+All packages install the binary to `/usr/bin/pcloud`.
+
+#### .deb (Debian/Ubuntu)
+
+```bash
+cargo install cargo-deb
+cargo deb
+# Output: target/debian/pcloud_<version>_<arch>.deb
+
+sudo dpkg -i target/debian/pcloud_*.deb
+```
+
+Runtime dependencies: `libfuse2`, `libsqlite3-0`, `libssl3`, `zlib1g`, `libudev1`.
+
+#### .rpm (Fedora/RHEL)
+
+```bash
+cargo install cargo-generate-rpm
+cargo build --release
+cargo generate-rpm
+# Output: target/generate-rpm/pcloud-<version>-<release>.<arch>.rpm
+
+sudo rpm -i target/generate-rpm/pcloud-*.rpm
+```
+
+Runtime dependencies: `fuse-libs`, `sqlite-libs`, `openssl-libs >= 3.0`, `zlib`, `systemd-libs`.
+
+#### Arch Linux
+
+```bash
+cd pkg/arch
+makepkg -si
+```
+
+Runtime dependencies: `fuse2`, `sqlite`, `openssl`, `zlib`, `systemd-libs`.
 
 ## Usage
 
