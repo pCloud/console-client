@@ -52,12 +52,26 @@
 //! ```
 
 use std::panic;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 
 use crate::ffi::types::{
     pevent_callback_t, pstatus_change_callback_t, pstatus_t, psync_eventdata_t, psync_eventtype_t,
     psync_generic_callback_t,
 };
+
+// ============================================================================
+// Mutex Helpers
+// ============================================================================
+
+/// Lock a mutex, recovering from poison if necessary.
+///
+/// Since our callback storage contains simple function objects with no
+/// complex invariants, it's safe to recover from a poisoned mutex.
+/// Poisoning can occur when a callback panics inside a trampoline
+/// (which catches the panic via `catch_unwind`).
+fn lock_or_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 // ============================================================================
 // Type Aliases for Callback Functions
@@ -136,14 +150,12 @@ pub unsafe extern "C" fn status_callback_trampoline(status: *mut pstatus_t) {
             return;
         }
 
-        // Try to acquire the callback mutex
-        if let Ok(guard) = STATUS_CALLBACK.lock() {
-            if let Some(ref callback) = *guard {
-                // Safety: We checked status is not null above
-                callback(&*status);
-            }
+        // Acquire the callback mutex, recovering from poison if needed
+        let guard = lock_or_recover(&STATUS_CALLBACK);
+        if let Some(ref callback) = *guard {
+            // Safety: We checked status is not null above
+            callback(&*status);
         }
-        // If mutex is poisoned or callback is None, silently do nothing
     });
 }
 
@@ -164,10 +176,9 @@ pub unsafe extern "C" fn event_callback_trampoline(
     event_data: psync_eventdata_t,
 ) {
     let _ = panic::catch_unwind(|| {
-        if let Ok(guard) = EVENT_CALLBACK.lock() {
-            if let Some(ref callback) = *guard {
-                callback(event_type, event_data);
-            }
+        let guard = lock_or_recover(&EVENT_CALLBACK);
+        if let Some(ref callback) = *guard {
+            callback(event_type, event_data);
         }
     });
 }
@@ -185,10 +196,9 @@ pub unsafe extern "C" fn notification_callback_trampoline(
     new_notification_count: u32,
 ) {
     let _ = panic::catch_unwind(|| {
-        if let Ok(guard) = NOTIFICATION_CALLBACK.lock() {
-            if let Some(ref callback) = *guard {
-                callback(notification_count, new_notification_count);
-            }
+        let guard = lock_or_recover(&NOTIFICATION_CALLBACK);
+        if let Some(ref callback) = *guard {
+            callback(notification_count, new_notification_count);
         }
     });
 }
@@ -203,10 +213,9 @@ pub unsafe extern "C" fn notification_callback_trampoline(
 #[no_mangle]
 pub unsafe extern "C" fn fs_start_callback_trampoline() {
     let _ = panic::catch_unwind(|| {
-        if let Ok(guard) = FS_START_CALLBACK.lock() {
-            if let Some(ref callback) = *guard {
-                callback();
-            }
+        let guard = lock_or_recover(&FS_START_CALLBACK);
+        if let Some(ref callback) = *guard {
+            callback();
         }
     });
 }
@@ -241,9 +250,7 @@ pub fn register_status_callback<F>(callback: F)
 where
     F: Fn(&pstatus_t) + Send + 'static,
 {
-    let mut guard = STATUS_CALLBACK
-        .lock()
-        .expect("STATUS_CALLBACK mutex poisoned");
+    let mut guard = lock_or_recover(&STATUS_CALLBACK);
     *guard = Some(Box::new(callback));
 }
 
@@ -286,9 +293,7 @@ pub fn register_event_callback<F>(callback: F)
 where
     F: Fn(psync_eventtype_t, psync_eventdata_t) + Send + 'static,
 {
-    let mut guard = EVENT_CALLBACK
-        .lock()
-        .expect("EVENT_CALLBACK mutex poisoned");
+    let mut guard = lock_or_recover(&EVENT_CALLBACK);
     *guard = Some(Box::new(callback));
 }
 
@@ -314,9 +319,7 @@ pub fn register_notification_callback<F>(callback: F)
 where
     F: Fn(u32, u32) + Send + 'static,
 {
-    let mut guard = NOTIFICATION_CALLBACK
-        .lock()
-        .expect("NOTIFICATION_CALLBACK mutex poisoned");
+    let mut guard = lock_or_recover(&NOTIFICATION_CALLBACK);
     *guard = Some(Box::new(callback));
 }
 
@@ -340,9 +343,7 @@ pub fn register_fs_start_callback<F>(callback: F)
 where
     F: Fn() + Send + 'static,
 {
-    let mut guard = FS_START_CALLBACK
-        .lock()
-        .expect("FS_START_CALLBACK mutex poisoned");
+    let mut guard = lock_or_recover(&FS_START_CALLBACK);
     *guard = Some(Box::new(callback));
 }
 
@@ -354,9 +355,7 @@ where
 ///
 /// After calling this, status changes will not trigger any callback.
 pub fn clear_status_callback() {
-    let mut guard = STATUS_CALLBACK
-        .lock()
-        .expect("STATUS_CALLBACK mutex poisoned");
+    let mut guard = lock_or_recover(&STATUS_CALLBACK);
     *guard = None;
 }
 
@@ -364,9 +363,7 @@ pub fn clear_status_callback() {
 ///
 /// After calling this, events will not trigger any callback.
 pub fn clear_event_callback() {
-    let mut guard = EVENT_CALLBACK
-        .lock()
-        .expect("EVENT_CALLBACK mutex poisoned");
+    let mut guard = lock_or_recover(&EVENT_CALLBACK);
     *guard = None;
 }
 
@@ -374,17 +371,13 @@ pub fn clear_event_callback() {
 ///
 /// After calling this, notifications will not trigger any callback.
 pub fn clear_notification_callback() {
-    let mut guard = NOTIFICATION_CALLBACK
-        .lock()
-        .expect("NOTIFICATION_CALLBACK mutex poisoned");
+    let mut guard = lock_or_recover(&NOTIFICATION_CALLBACK);
     *guard = None;
 }
 
 /// Clear the registered filesystem start callback.
 pub fn clear_fs_start_callback() {
-    let mut guard = FS_START_CALLBACK
-        .lock()
-        .expect("FS_START_CALLBACK mutex poisoned");
+    let mut guard = lock_or_recover(&FS_START_CALLBACK);
     *guard = None;
 }
 
@@ -489,33 +482,25 @@ impl CallbackConfig {
     pub fn register(self) -> CallbackPointers {
         // Register status callback if provided
         if let Some(callback) = self.status_callback {
-            let mut guard = STATUS_CALLBACK
-                .lock()
-                .expect("STATUS_CALLBACK mutex poisoned");
+            let mut guard = lock_or_recover(&STATUS_CALLBACK);
             *guard = Some(callback);
         }
 
         // Register event callback if provided
         if let Some(callback) = self.event_callback {
-            let mut guard = EVENT_CALLBACK
-                .lock()
-                .expect("EVENT_CALLBACK mutex poisoned");
+            let mut guard = lock_or_recover(&EVENT_CALLBACK);
             *guard = Some(callback);
         }
 
         // Register notification callback if provided
         if let Some(callback) = self.notification_callback {
-            let mut guard = NOTIFICATION_CALLBACK
-                .lock()
-                .expect("NOTIFICATION_CALLBACK mutex poisoned");
+            let mut guard = lock_or_recover(&NOTIFICATION_CALLBACK);
             *guard = Some(callback);
         }
 
         // Register fs_start callback if provided
         if let Some(callback) = self.fs_start_callback {
-            let mut guard = FS_START_CALLBACK
-                .lock()
-                .expect("FS_START_CALLBACK mutex poisoned");
+            let mut guard = lock_or_recover(&FS_START_CALLBACK);
             *guard = Some(callback);
         }
 
@@ -838,7 +823,7 @@ mod tests {
 
         // Verify callback is stored
         {
-            let guard = STATUS_CALLBACK.lock().unwrap();
+            let guard = lock_or_recover(&STATUS_CALLBACK);
             assert!(guard.is_some());
         }
 
@@ -847,7 +832,7 @@ mod tests {
 
         // Verify callback is cleared
         {
-            let guard = STATUS_CALLBACK.lock().unwrap();
+            let guard = lock_or_recover(&STATUS_CALLBACK);
             assert!(guard.is_none());
         }
     }
@@ -863,7 +848,7 @@ mod tests {
 
         // Verify callback is stored
         {
-            let guard = EVENT_CALLBACK.lock().unwrap();
+            let guard = lock_or_recover(&EVENT_CALLBACK);
             assert!(guard.is_some());
         }
 
@@ -872,7 +857,7 @@ mod tests {
 
         // Verify callback is cleared
         {
-            let guard = EVENT_CALLBACK.lock().unwrap();
+            let guard = lock_or_recover(&EVENT_CALLBACK);
             assert!(guard.is_none());
         }
     }
@@ -888,7 +873,7 @@ mod tests {
 
         // Verify callback is stored
         {
-            let guard = NOTIFICATION_CALLBACK.lock().unwrap();
+            let guard = lock_or_recover(&NOTIFICATION_CALLBACK);
             assert!(guard.is_some());
         }
 
@@ -905,19 +890,19 @@ mod tests {
         register_fs_start_callback(|| {});
 
         // Verify all are registered
-        assert!(STATUS_CALLBACK.lock().unwrap().is_some());
-        assert!(EVENT_CALLBACK.lock().unwrap().is_some());
-        assert!(NOTIFICATION_CALLBACK.lock().unwrap().is_some());
-        assert!(FS_START_CALLBACK.lock().unwrap().is_some());
+        assert!(lock_or_recover(&STATUS_CALLBACK).is_some());
+        assert!(lock_or_recover(&EVENT_CALLBACK).is_some());
+        assert!(lock_or_recover(&NOTIFICATION_CALLBACK).is_some());
+        assert!(lock_or_recover(&FS_START_CALLBACK).is_some());
 
         // Clear all
         clear_all_callbacks();
 
         // Verify all are cleared
-        assert!(STATUS_CALLBACK.lock().unwrap().is_none());
-        assert!(EVENT_CALLBACK.lock().unwrap().is_none());
-        assert!(NOTIFICATION_CALLBACK.lock().unwrap().is_none());
-        assert!(FS_START_CALLBACK.lock().unwrap().is_none());
+        assert!(lock_or_recover(&STATUS_CALLBACK).is_none());
+        assert!(lock_or_recover(&EVENT_CALLBACK).is_none());
+        assert!(lock_or_recover(&NOTIFICATION_CALLBACK).is_none());
+        assert!(lock_or_recover(&FS_START_CALLBACK).is_none());
     }
 
     #[test]

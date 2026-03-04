@@ -39,7 +39,7 @@ fn test_help_flag_long() {
     cmd.arg("--help")
         .assert()
         .success()
-        .stdout(predicate::str::contains("pCloud Console Client"))
+        .stdout(predicate::str::contains("pCloud storage"))
         .stdout(predicate::str::contains("FUSE"))
         .stdout(predicate::str::contains("daemon"));
 }
@@ -93,20 +93,23 @@ fn test_version_flag_long() {
 // ============================================================================
 
 #[test]
-fn test_missing_username_fails() {
+fn test_password_flag_without_username_fails() {
+    // -p requires -u to be specified (validated by Cli::validate)
     let mut cmd = pcloud_cmd();
-    cmd.assert()
+    cmd.args(["-p"])
+        .assert()
         .failure()
-        .stderr(predicate::str::contains("required"));
+        .stderr(predicate::str::contains("--password requires --username"));
 }
 
 #[test]
-fn test_missing_username_with_other_flags() {
+fn test_newuser_flag_without_username_fails() {
+    // -n requires -u to be specified (validated by Cli::validate)
     let mut cmd = pcloud_cmd();
-    cmd.args(["-p", "-d"])
+    cmd.args(["-n"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("required"));
+        .stderr(predicate::str::contains("--newuser requires --username"));
 }
 
 #[test]
