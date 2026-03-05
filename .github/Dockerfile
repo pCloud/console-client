@@ -22,7 +22,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Rust stable
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
-    sh -s -- -y --default-toolchain stable --profile minimal
+    sh -s -- -y --default-toolchain stable --profile minimal && \
+    rustup component add clippy rustfmt
 
 # Packaging tools
 RUN cargo install cargo-deb cargo-generate-rpm

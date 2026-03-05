@@ -25,6 +25,34 @@ jobs:
       - id: lowercase
         run: echo "repo_lc=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
+  lint:
+    needs: setup
+    runs-on: ubuntu-latest
+    container: ghcr.io/${{ needs.setup.outputs.repo_lc }}/ci:1.0
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: cargo-lint-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}
+          restore-keys: cargo-lint-${{ runner.os }}-
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy -- -D warnings
+
+      - name: Cargo check
+        run: cargo check
+
   build-and-test:
     needs: setup # 2. Require the setup job to finish first
     runs-on: ubuntu-latest
