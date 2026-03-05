@@ -162,6 +162,21 @@ fn main() {
     // Tell Cargo to rerun this script if pclsync sources change
     println!("cargo:rerun-if-changed=pclsync/");
     println!("cargo:rerun-if-changed=build.rs");
+
+    // Emit PCLOUD_VERSION with profile suffix
+    let base_version = env::var("CARGO_PKG_VERSION").unwrap();
+    let build_profile = env::var("PCLOUD_BUILD_PROFILE").unwrap_or_default();
+    let profile = env::var("PROFILE").unwrap_or_default();
+
+    let version = match build_profile.as_str() {
+        "qa" => format!("{}-qa", base_version),
+        _ if profile == "debug" => format!("{}-dev", base_version),
+        _ => base_version,
+    };
+
+    println!("cargo:rustc-env=PCLOUD_VERSION={}", version);
+    println!("cargo:rerun-if-env-changed=PCLOUD_BUILD_PROFILE");
+    println!("cargo:rerun-if-env-changed=BUGSNAG_API_KEY");
 }
 
 /// Generate Rust bindings for pclsync C structs using bindgen.

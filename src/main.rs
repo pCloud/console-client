@@ -61,6 +61,9 @@ static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 /// - Daemon mode: Runs as a background service
 /// - Foreground mode: Normal interactive operation
 fn main() -> ExitCode {
+    // Initialize crash reporting before anything that could crash
+    console_client::crash_reporting::init();
+
     // Parse CLI arguments
     let cli = Cli::parse();
 
@@ -74,6 +77,7 @@ fn main() -> ExitCode {
     match run(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
+            console_client::crash_reporting::notify_error(&e);
             eprintln!("Error: {}", e);
             ExitCode::FAILURE
         }

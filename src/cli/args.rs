@@ -36,7 +36,7 @@ use clap::Parser;
 /// - Auth token entry
 #[derive(Parser, Debug, Clone)]
 #[command(name = "pcloud")]
-#[command(version, about = "pCloud Console Client")]
+#[command(version = env!("PCLOUD_VERSION"), about = "pCloud Console Client")]
 #[command(long_about = "Mount pCloud storage as a local filesystem.\n\n\
     This client allows you to access your pCloud storage through a FUSE \
     filesystem mount, with support for encrypted folders (Crypto) and \

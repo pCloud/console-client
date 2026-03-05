@@ -29,6 +29,7 @@
 //! ```
 
 pub mod cli;
+pub mod crash_reporting;
 pub mod daemon;
 pub mod error;
 pub mod ffi;

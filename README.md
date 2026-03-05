@@ -93,6 +93,27 @@ cargo build --release
 # - Release: target/release/pcloud
 ```
 
+### Build Profiles
+
+The build system supports three profiles that control the version suffix and
+whether crash reporting is included:
+
+| Profile     | Command                                                                                      | Version output  | Crash reporting |
+|-------------|----------------------------------------------------------------------------------------------|-----------------|-----------------|
+| Development | `cargo build`                                                                                | `0.1.0-dev`     | No              |
+| QA          | `BUGSNAG_API_KEY=<key> PCLOUD_BUILD_PROFILE=qa cargo build --release --features crash-reporting` | `0.1.0-qa`  | Yes             |
+| Release     | `BUGSNAG_API_KEY=<key> cargo build --release --features crash-reporting`                      | `0.1.0`         | Yes             |
+
+- **Development** — Default `cargo build` with no extra flags. Fast iteration,
+  debug symbols, no crash reporting, no API key needed.
+- **QA** — Release-optimized binary with crash reporting enabled. Reports are
+  tagged with release stage `qa` in Bugsnag so they can be filtered from
+  production crashes.
+- **Release** — Production binary. Reports are tagged with release stage
+  `production` in Bugsnag.
+
+The version string is available at runtime via `pcloud --version`.
+
 ### Install
 
 ```bash
@@ -238,6 +259,11 @@ src/
 |   |-- mod.rs           # Module exports
 |   |-- args.rs          # Clap argument definitions (Cli struct)
 |   +-- commands.rs      # Interactive command parsing
+|-- crash_reporting/     # Bugsnag crash reporting (feature-gated)
+|   |-- mod.rs           # Public API: init(), notify_error(), app_version()
+|   |-- config.rs        # Bugsnag client singleton and release stage
+|   |-- panic_hook.rs    # Rust panic hook for Bugsnag reporting
+|   +-- native.rs        # Minidump crash handling and upload
 |-- ffi/                 # FFI bindings to pclsync C library
 |   |-- mod.rs           # Module exports and re-exports
 |   |-- raw.rs           # C function declarations (extern "C")
@@ -291,6 +317,82 @@ This client implements several security measures:
 - Passwords in transit over IPC are not encrypted (Unix socket is local-only)
 - Core dumps may contain password memory if not disabled
 - pclsync C library has its own memory management
+
+## Crash Reporting
+
+When built with the `crash-reporting` Cargo feature, the client reports crashes
+to [Bugsnag](https://www.bugsnag.com) for both Rust and C code.
+
+### What is reported
+
+| Crash type          | Mechanism                                      |
+|---------------------|------------------------------------------------|
+| Rust panics         | Custom `panic::set_hook` sends a Bugsnag error |
+| Native signals      | `crash-handler` catches SIGSEGV, SIGABRT, SIGBUS, SIGFPE; a monitor thread writes a minidump and uploads it to Bugsnag |
+| Non-fatal errors    | Top-level application errors are sent via `notify_error()` |
+
+Native crash handling uses an out-of-process model: a dedicated monitor thread
+runs a `minidumper::Server` over IPC. When a signal fires, the handler requests
+the monitor to write a minidump from the crashed process via `ptrace`, then
+uploads it. If the upload fails at crash time the dump is queued to
+`$XDG_DATA_HOME/pcloud/crashes/` and retried on the next startup.
+
+### Enabling crash reporting
+
+Crash reporting is gated behind the `crash-reporting` Cargo feature and is
+**off by default** — plain `cargo build` produces a binary with no Bugsnag
+dependency and no API key requirement.
+
+To enable it, pass the feature flag and provide a Bugsnag API key at build time:
+
+```bash
+BUGSNAG_API_KEY=<your-key> cargo build --release --features crash-reporting
+```
+
+### How the API key is provided
+
+The Bugsnag API key is injected at **compile time** through the `BUGSNAG_API_KEY`
+environment variable. The build script (`build.rs`) declares
+`cargo:rerun-if-env-changed=BUGSNAG_API_KEY` so Cargo will rebuild when the
+value changes.
+
+Inside the source the key is read with `env!("BUGSNAG_API_KEY")`, which means:
+
+- The key must be set in the environment **when `cargo build` runs**. If the
+  `crash-reporting` feature is enabled and the variable is missing, compilation
+  fails with a clear error.
+- The key is embedded in the binary as a string literal. For distribution
+  builds, run `strip` on the binary and upload Breakpad symbols separately (see
+  below) to avoid shipping debug info alongside the key.
+- Development builds (`cargo build` without `--features crash-reporting`) never
+  reference the variable, so no key is needed for day-to-day work.
+
+### Symbol upload
+
+For symbolicated stack traces in the Bugsnag dashboard, debug symbols must be
+uploaded separately. A helper script is provided:
+
+```bash
+BUGSNAG_API_KEY=<your-key> ./scripts/upload-symbols.sh
+```
+
+The script:
+1. Builds a release binary with full debug info (`-C debuginfo=2`)
+2. Generates a Breakpad `.sym` file with `dump_syms`
+3. Uploads the symbols to Bugsnag via `bugsnag-cli`
+4. Strips the binary for distribution
+
+Prerequisites: `dump_syms` (`cargo install dump_syms`) and `bugsnag-cli`
+(`npm install -g @bugsnag/cli`).
+
+### Signal handler compatibility
+
+The crash handler only intercepts **crash signals** (SIGSEGV, SIGBUS, SIGABRT,
+SIGFPE). It does not conflict with the existing signal handlers:
+
+- `ctrlc` crate handles SIGINT in foreground mode
+- `nix` handles SIGTERM/SIGHUP/SIGINT in daemon mode
+- SIGPIPE is ignored by the pclsync C library
 
 ## Migrating from C++ Version
 

@@ -15,6 +15,10 @@ path = "src/lib.rs"
 name = "pcloud"
 path = "src/main.rs"
 
+[features]
+default = []
+crash-reporting = ["dep:bugsnag", "dep:obfstr", "dep:crash-handler", "dep:minidumper", "dep:ureq"]
+
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
 thiserror = "2.0"
@@ -30,6 +34,11 @@ libc = "0.2"
 ctrlc = "3.4"
 qrcode = "0.14"
 dirs = "5.0"
+bugsnag = { version = "0.2", optional = true }
+obfstr = { version = "0.4", optional = true }
+crash-handler = { version = "0.7", optional = true }
+minidumper = { version = "0.9", optional = true }
+ureq = { version = "3", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.29", features = ["signal", "process"] }
