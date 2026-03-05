@@ -57,7 +57,6 @@ fn main() {
         .flag_if_supported("-Wno-error=incompatible-pointer-types")
         .define("PSYNC_DEFAULT_POSIX_SUBDIR", "\"cli\"");
 
-
     // Set DEBUG_LEVEL for debug builds (D_NOTICE = 50)
     let profile = env::var("PROFILE").unwrap_or_default();
     if profile == "debug" {
@@ -74,7 +73,10 @@ fn main() {
         "linux" => configure_linux(&mut build, &pclsync_dir),
         "macos" => configure_macos(&mut build, &pclsync_dir),
         _ => {
-            eprintln!("Warning: Unsupported target OS '{}', attempting Linux-like build", target_os);
+            eprintln!(
+                "Warning: Unsupported target OS '{}', attempting Linux-like build",
+                target_os
+            );
             configure_linux(&mut build, &pclsync_dir);
         }
     }
@@ -289,9 +291,7 @@ fn generate_bindings(pclsync_dir: &PathBuf, out_dir: &PathBuf, target_os: &str) 
     }
 
     // Generate the bindings
-    let bindings = builder
-        .generate()
-        .expect("Failed to generate bindings");
+    let bindings = builder.generate().expect("Failed to generate bindings");
 
     // Write bindings to $OUT_DIR/bindings.rs
     let bindings_path = out_dir.join("bindings.rs");

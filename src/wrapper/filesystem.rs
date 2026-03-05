@@ -62,8 +62,7 @@ use std::path::{Path, PathBuf};
 use crate::error::{FilesystemError, PCloudError, Result};
 use crate::ffi::raw;
 use crate::ffi::types::{
-    psync_folder_list_t, psync_syncid_t, psync_synctype_t, PSYNC_DOWNLOAD_ONLY, PSYNC_FULL,
-    PSYNC_UPLOAD_ONLY,
+    psync_folder_list_t, psync_synctype_t, PSYNC_DOWNLOAD_ONLY, PSYNC_FULL, PSYNC_UPLOAD_ONLY,
 };
 use crate::utils::cstring::{from_cstr_and_free, try_to_cstring};
 

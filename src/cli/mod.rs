@@ -31,7 +31,9 @@ pub mod commands;
 
 // Re-export main types for convenience
 pub use args::Cli;
-pub use auth_prompt::{prompt_auth_choice, prompt_credentials, prompt_token, print_cli_auth_help, AuthChoice};
+pub use auth_prompt::{
+    print_cli_auth_help, prompt_auth_choice, prompt_credentials, prompt_token, AuthChoice,
+};
 pub use commands::{CommandPrompt, InteractiveCommand};
 
 /// Initialize CLI module.

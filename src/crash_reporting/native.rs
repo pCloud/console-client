@@ -118,9 +118,7 @@ fn run_monitor_server(socket_name: &str, dump_dir: &Path, shutdown: &AtomicBool)
     }
 
     impl minidumper::ServerHandler for Handler {
-        fn create_minidump_file(
-            &self,
-        ) -> Result<(fs::File, PathBuf), std::io::Error> {
+        fn create_minidump_file(&self) -> Result<(fs::File, PathBuf), std::io::Error> {
             let timestamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -137,9 +135,7 @@ fn run_monitor_server(socket_name: &str, dump_dir: &Path, shutdown: &AtomicBool)
             match result {
                 Ok(minidump) => {
                     // Try to upload; if upload succeeds, remove the file
-                    let contents = minidump
-                        .contents
-                        .or_else(|| fs::read(&minidump.path).ok());
+                    let contents = minidump.contents.or_else(|| fs::read(&minidump.path).ok());
 
                     if let Some(data) = contents {
                         if upload_minidump(&data).is_ok() {
@@ -170,9 +166,7 @@ fn run_monitor_server(socket_name: &str, dump_dir: &Path, shutdown: &AtomicBool)
         }
     }
 
-    let handler = Handler {
-        dump_dir,
-    };
+    let handler = Handler { dump_dir };
 
     let server = minidumper::Server::with_name(minidumper::SocketName::path(socket_name));
     match server {
@@ -204,9 +198,7 @@ fn upload_minidump(data: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
 
     let content_type = format!("multipart/form-data; boundary={}", boundary);
 
-    ureq::post(&url)
-        .content_type(&content_type)
-        .send(&body)?;
+    ureq::post(&url).content_type(&content_type).send(&body)?;
 
     Ok(())
 }

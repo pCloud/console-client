@@ -12,9 +12,16 @@ static CLIENT: OnceLock<Arc<Bugsnag>> = OnceLock::new();
 /// without requiring the `BUGSNAG_API_KEY` environment variable.
 pub(crate) fn api_key() -> &'static str {
     #[cfg(test)]
-    { "test-api-key" }
+    {
+        "test-api-key"
+    }
     #[cfg(not(test))]
-    { env!("BUGSNAG_API_KEY", "BUGSNAG_API_KEY env var must be set at compile time") }
+    {
+        env!(
+            "BUGSNAG_API_KEY",
+            "BUGSNAG_API_KEY env var must be set at compile time"
+        )
+    }
 }
 
 /// Derive the Bugsnag release stage from the version string.

@@ -68,7 +68,10 @@ pub fn has_display() -> bool {
     }
 
     // Check for generic GUI session
-    if std::env::var("XDG_SESSION_TYPE").map(|v| v != "tty").unwrap_or(false) {
+    if std::env::var("XDG_SESSION_TYPE")
+        .map(|v| v != "tty")
+        .unwrap_or(false)
+    {
         return true;
     }
 
@@ -125,7 +128,14 @@ pub fn open_url(url: &str) -> Result<bool, std::io::Error> {
         }
 
         // Try other common browsers/openers as fallback
-        for cmd in &["x-www-browser", "gnome-open", "kde-open", "firefox", "chromium", "google-chrome"] {
+        for cmd in &[
+            "x-www-browser",
+            "gnome-open",
+            "kde-open",
+            "firefox",
+            "chromium",
+            "google-chrome",
+        ] {
             if try_open_with(cmd, &[url])? {
                 return Ok(true);
             }

@@ -118,7 +118,8 @@ pub fn generate_qr_code(data: &str) -> Result<String, QrCodeError> {
     use qrcode::render::unicode::Dense1x2;
     use qrcode::QrCode;
 
-    let code = QrCode::new(data.as_bytes()).map_err(|e| QrCodeError::EncodingError(e.to_string()))?;
+    let code =
+        QrCode::new(data.as_bytes()).map_err(|e| QrCodeError::EncodingError(e.to_string()))?;
 
     let image = code
         .render::<Dense1x2>()
@@ -138,7 +139,8 @@ pub fn generate_qr_code(data: &str) -> Result<String, QrCodeError> {
 pub fn generate_qr_code_ascii(data: &str) -> Result<String, QrCodeError> {
     use qrcode::QrCode;
 
-    let code = QrCode::new(data.as_bytes()).map_err(|e| QrCodeError::EncodingError(e.to_string()))?;
+    let code =
+        QrCode::new(data.as_bytes()).map_err(|e| QrCodeError::EncodingError(e.to_string()))?;
 
     let width = code.width();
     let mut result = String::new();

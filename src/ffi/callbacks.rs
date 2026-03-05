@@ -70,7 +70,9 @@ use crate::ffi::types::{
 /// Poisoning can occur when a callback panics inside a trampoline
 /// (which catches the panic via `catch_unwind`).
 fn lock_or_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 // ============================================================================

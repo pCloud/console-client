@@ -266,7 +266,9 @@ impl Cli {
     /// If no mountpoint is specified, returns the default mountpoint
     /// which is ~/pCloud.
     pub fn get_mountpoint(&self) -> PathBuf {
-        self.mountpoint.clone().unwrap_or_else(Self::default_mountpoint)
+        self.mountpoint
+            .clone()
+            .unwrap_or_else(Self::default_mountpoint)
     }
 
     /// Get the default mountpoint path.
@@ -348,11 +350,7 @@ mod tests {
 
     #[test]
     fn test_parse_token_flag() {
-        let cli = Cli::parse_from_args([
-            "pcloud",
-            "-t",
-            "my-auth-token",
-        ]);
+        let cli = Cli::parse_from_args(["pcloud", "-t", "my-auth-token"]);
         assert_eq!(cli.auth_token, Some("my-auth-token".to_string()));
         assert!(cli.username.is_none());
     }

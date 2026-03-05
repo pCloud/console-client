@@ -146,7 +146,9 @@ pub fn prompt_username() -> Result<String> {
     let username = username.trim().to_string();
 
     if username.is_empty() {
-        return Err(PCloudError::InvalidArgument("Email cannot be empty".to_string()));
+        return Err(PCloudError::InvalidArgument(
+            "Email cannot be empty".to_string(),
+        ));
     }
 
     Ok(username)
@@ -185,7 +187,9 @@ pub fn prompt_token() -> Result<SecretString> {
     let token = prompt_for_password("Auth token: ").map_err(PCloudError::Io)?;
 
     if token.expose_secret().is_empty() {
-        return Err(PCloudError::InvalidArgument("Auth token cannot be empty".to_string()));
+        return Err(PCloudError::InvalidArgument(
+            "Auth token cannot be empty".to_string(),
+        ));
     }
 
     Ok(token)

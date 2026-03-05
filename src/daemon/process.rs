@@ -1,4 +1,3 @@
-
 //! Process daemonization functionality.
 //!
 //! This module provides functionality to daemonize the pCloud client process

@@ -774,7 +774,9 @@ mod tests {
 
     #[test]
     fn test_crypto_error_display() {
-        assert!(CryptoError::NotSupported.to_string().contains("not supported"));
+        assert!(CryptoError::NotSupported
+            .to_string()
+            .contains("not supported"));
         assert!(CryptoError::BadPassword.to_string().contains("password"));
         assert!(CryptoError::NotStarted.to_string().contains("not started"));
         assert!(CryptoError::AlreadyStarted

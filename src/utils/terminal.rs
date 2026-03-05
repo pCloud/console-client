@@ -199,11 +199,7 @@ pub fn format_boxed(lines: &[&str]) -> String {
     let max_box_width = term_width.saturating_sub(4); // Leave some margin
 
     // Find the longest line
-    let max_line_len = lines
-        .iter()
-        .map(|s| s.chars().count())
-        .max()
-        .unwrap_or(0);
+    let max_line_len = lines.iter().map(|s| s.chars().count()).max().unwrap_or(0);
 
     // Calculate box width (content + padding)
     let content_width = max_line_len.min(max_box_width);
@@ -211,7 +207,9 @@ pub fn format_boxed(lines: &[&str]) -> String {
 
     // Use Unicode box drawing characters if supported
     let (tl, tr, bl, br, h, v) = if supports_unicode() {
-        ('\u{256D}', '\u{256E}', '\u{2570}', '\u{256F}', '\u{2500}', '\u{2502}')
+        (
+            '\u{256D}', '\u{256E}', '\u{2570}', '\u{256F}', '\u{2500}', '\u{2502}',
+        )
     } else {
         ('+', '+', '+', '+', '-', '|')
     };

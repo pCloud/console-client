@@ -35,12 +35,11 @@
 //! ```
 
 use secrecy::{ExposeSecret, SecretString};
+use std::os::raw::{c_char, c_int};
 
 use crate::error::{AuthError, PCloudError, Result};
 use crate::ffi::raw;
-use crate::ffi::types::{
-    PSTATUS_BAD_LOGIN_DATA, PSTATUS_BAD_LOGIN_TOKEN, PSTATUS_LOGIN_REQUIRED, PSTATUS_USER_MISMATCH,
-};
+use crate::ffi::types::{PSTATUS_BAD_LOGIN_DATA, PSTATUS_BAD_LOGIN_TOKEN, PSTATUS_LOGIN_REQUIRED};
 use crate::utils::cstring::{from_cstr_and_free, from_cstr_ref, try_to_cstring};
 
 use super::client::{AuthState, PCloudClient};
@@ -382,6 +381,10 @@ impl PCloudClient {
         // Safety: psync_verify_email sends a verification email
         let result = unsafe { raw::psync_verify_email(&mut err_ptr) };
 
+        Self::psync_result_to_ffi_result(err_ptr, result)
+    }
+
+    fn psync_result_to_ffi_result(err_ptr: *mut c_char, result: c_int) -> Result<()> {
         if result == 0 {
             Ok(())
         } else if result == -1 {
@@ -417,20 +420,7 @@ impl PCloudClient {
         // Safety: psync_lost_password sends a reset email
         let result = unsafe { raw::psync_lost_password(c_email.as_ptr(), &mut err_ptr) };
 
-        if result == 0 {
-            Ok(())
-        } else if result == -1 {
-            Err(PCloudError::Auth(AuthError::NetworkError))
-        } else {
-            let error_msg = if !err_ptr.is_null() {
-                unsafe { from_cstr_and_free(err_ptr, |p| raw::psync_free(p)) }
-                    .unwrap_or_else(|| format!("Error code: {}", result))
-            } else {
-                format!("Error code: {}", result)
-            };
-
-            Err(PCloudError::Auth(AuthError::Other(error_msg)))
-        }
+        Self::psync_result_to_ffi_result(err_ptr, result)
     }
 
     /// Change the user's password.
@@ -460,47 +450,7 @@ impl PCloudClient {
         let result =
             unsafe { raw::psync_change_password(c_current.as_ptr(), c_new.as_ptr(), &mut err_ptr) };
 
-        if result == 0 {
-            Ok(())
-        } else if result == -1 {
-            Err(PCloudError::Auth(AuthError::NetworkError))
-        } else {
-            let error_msg = if !err_ptr.is_null() {
-                unsafe { from_cstr_and_free(err_ptr, |p| raw::psync_free(p)) }
-                    .unwrap_or_else(|| format!("Error code: {}", result))
-            } else {
-                format!("Error code: {}", result)
-            };
-
-            // Check for common error codes
-            Err(PCloudError::Auth(AuthError::Other(error_msg)))
-        }
-    }
-
-    /// Update authentication state based on status code.
-    ///
-    /// This is called internally to update the auth state based on
-    /// status callbacks from the C library.
-    pub(crate) fn update_auth_state_from_status(&mut self, status: u32) {
-        let new_state = match status {
-            PSTATUS_LOGIN_REQUIRED => AuthState::NotAuthenticated,
-            PSTATUS_BAD_LOGIN_DATA => AuthState::Failed("Invalid credentials".to_string()),
-            PSTATUS_BAD_LOGIN_TOKEN => AuthState::Failed("Invalid or expired token".to_string()),
-            PSTATUS_USER_MISMATCH => {
-                AuthState::Failed("User mismatch - unlink required".to_string())
-            }
-            _ => {
-                // Any other status means we're authenticated (or in a non-auth-related state)
-                if self.auth_state == AuthState::Authenticating {
-                    AuthState::Authenticated
-                } else {
-                    // Keep current state if not actively authenticating
-                    return;
-                }
-            }
-        };
-
-        self.set_auth_state(new_state);
+        Self::psync_result_to_ffi_result(err_ptr, result)
     }
 }
 

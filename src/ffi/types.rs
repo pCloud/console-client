@@ -22,7 +22,7 @@
 #![allow(dead_code)]
 #![allow(clippy::all)]
 
-use std::os::raw::{c_char, c_int, c_uint, c_ulong};
+use std::os::raw::c_int;
 
 // Include bindgen-generated bindings
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));

@@ -117,7 +117,6 @@ pub fn get_machine_name_safe() -> String {
 fn generate_device_id() -> String {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     let mut hasher = DefaultHasher::new();
 
@@ -224,10 +223,7 @@ fn build_login_url(request_id: &str, config: &WebLoginConfig) -> Result<String> 
         .collect::<Vec<_>>()
         .join("&");
 
-    let url = format!(
-        "{}?{}&os={}",
-        WEB_LOGIN_BASE_URL, query_string, config.os
-    );
+    let url = format!("{}?{}&os={}", WEB_LOGIN_BASE_URL, query_string, config.os);
 
     Ok(url)
 }

@@ -24,7 +24,7 @@
 //! to free the memory using `psync_free()` or the standard `free()` function.
 //! Check the documentation of each function for specific requirements.
 
-use std::os::raw::{c_char, c_int, c_uint, c_ulong};
+use std::os::raw::{c_char, c_int, c_ulong};
 
 use super::types::*;
 
