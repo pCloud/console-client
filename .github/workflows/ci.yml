@@ -1,0 +1,127 @@
+name: CI
+
+on:
+  push:
+    branches: [develop, master]
+    tags: ['v*']
+  pull_request:
+    branches: [develop, master]
+
+permissions:
+  contents: write
+  packages: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RELEASE_BUILD: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v')) }}
+
+jobs:
+  # 1. New setup job to create the lowercase repository variable
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      repo_lc: ${{ steps.lowercase.outputs.repo_lc }}
+    steps:
+      - id: lowercase
+        run: echo "repo_lc=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+  build-and-test:
+    needs: setup # 2. Require the setup job to finish first
+    runs-on: ubuntu-latest
+    # 3. Use the output from the setup job
+    container: ghcr.io/${{ needs.setup.outputs.repo_lc }}/ci:1.0
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Build
+        run: |
+          FEATURES=""
+          if [ "$RELEASE_BUILD" = "true" ]; then
+            FEATURES="--features crash-reporting"
+          fi
+          cargo build --release $FEATURES
+        env:
+          BUGSNAG_API_KEY: ${{ secrets.BUGSNAG_API_KEY }}
+
+      - name: Test
+        run: cargo test --release
+
+      - name: Upload binary
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v'))
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary
+          path: target/release/pcloud
+          retention-days: 5
+
+  package:
+    runs-on: ubuntu-latest
+    # 4. Include setup in the needs array to access its outputs here
+    needs: [setup, build-and-test]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v'))
+    # 5. Use the output from the setup job
+    container: ghcr.io/${{ needs.setup.outputs.repo_lc }}/ci:latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: binary
+          path: target/release/
+
+      - name: Ensure binary is executable
+        run: chmod +x target/release/pcloud
+
+      - name: Build .deb
+        run: cargo deb --no-build
+
+      - name: Build .rpm
+        run: cargo generate-rpm
+
+      - name: Strip binary
+        run: strip target/release/pcloud
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          retention-days: 30
+          path: |
+            target/debian/*.deb
+            target/generate-rpm/*.rpm
+            target/release/pcloud
+
+  release:
+    runs-on: ubuntu-latest
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: packages
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            debian/*.deb
+            generate-rpm/*.rpm
+            release/pcloud
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
