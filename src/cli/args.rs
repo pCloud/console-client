@@ -96,8 +96,17 @@ pub struct Cli {
     pub newuser: bool,
 
     /// Save credentials for automatic login
+    ///
+    /// This is the default behavior. Kept for backward compatibility.
     #[arg(short = 's', long = "savepassword")]
     pub save_password: bool,
+
+    /// Do not save credentials between sessions
+    ///
+    /// By default, credentials are saved for automatic login on next run.
+    /// Use this flag to prevent saving credentials.
+    #[arg(long = "nosave")]
+    pub nosave: bool,
 }
 
 impl Cli {
@@ -216,6 +225,14 @@ impl Cli {
                 .to_string());
         }
 
+        // --nosave and -s (savepassword) are mutually exclusive
+        if self.nosave && self.save_password {
+            return Err("Cannot use both --nosave and --savepassword. \
+                Use --nosave to prevent saving credentials, \
+                or --savepassword to explicitly save them (default behavior)."
+                .to_string());
+        }
+
         Ok(())
     }
 
@@ -278,6 +295,14 @@ impl Cli {
     /// we need to prompt the user for authentication method.
     pub fn needs_interactive_auth(&self) -> bool {
         !self.has_cli_credentials() && !self.commands_only
+    }
+
+    /// Check if credentials should be saved for future sessions.
+    ///
+    /// Returns `true` by default (save credentials). Returns `false` only
+    /// when `--nosave` is explicitly specified.
+    pub fn should_save_credentials(&self) -> bool {
+        !self.nosave
     }
 
     /// Get the username, if provided.
@@ -501,6 +526,8 @@ mod tests {
         assert!(!cli.commands_only);
         assert!(!cli.newuser);
         assert!(!cli.save_password);
+        assert!(!cli.nosave);
+        assert!(cli.should_save_credentials());
     }
 
     #[test]
@@ -561,5 +588,39 @@ mod tests {
 
         let cli2 = Cli::default();
         assert_eq!(cli2.get_username(), None);
+    }
+
+    #[test]
+    fn test_should_save_credentials_default() {
+        let cli = Cli::default();
+        assert!(cli.should_save_credentials());
+    }
+
+    #[test]
+    fn test_should_save_credentials_nosave() {
+        let cli = Cli {
+            nosave: true,
+            ..Default::default()
+        };
+        assert!(!cli.should_save_credentials());
+    }
+
+    #[test]
+    fn test_nosave_and_savepassword_conflict() {
+        let cli = Cli {
+            nosave: true,
+            save_password: true,
+            ..Default::default()
+        };
+        let result = cli.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("--nosave"));
+    }
+
+    #[test]
+    fn test_parse_nosave_flag() {
+        let cli = Cli::parse_from_args(["pcloud", "--nosave"]);
+        assert!(cli.nosave);
+        assert!(!cli.should_save_credentials());
     }
 }

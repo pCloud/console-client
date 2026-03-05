@@ -322,6 +322,35 @@ fn test_long_and_short_flags_mixed() {
 }
 
 // ============================================================================
+// Nosave Flag Tests
+// ============================================================================
+
+#[test]
+fn test_nosave_flag() {
+    let mut cmd = pcloud_cmd();
+    // --nosave should parse successfully
+    cmd.args(["--nosave"]).assert().failure(); // Expected - can't actually connect
+}
+
+#[test]
+fn test_nosave_and_savepassword_conflict() {
+    let mut cmd = pcloud_cmd();
+    cmd.args(["--nosave", "-s"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--nosave"));
+}
+
+#[test]
+fn test_help_shows_nosave_flag() {
+    let mut cmd = pcloud_cmd();
+    cmd.arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--nosave"));
+}
+
+// ============================================================================
 // Edge Cases
 // ============================================================================
 

@@ -174,6 +174,27 @@ impl PCloudClient {
         Ok(())
     }
 
+    /// Save the current in-memory auth token to the database.
+    ///
+    /// Retrieves the current auth token and persists it by calling
+    /// `psync_set_auth(token, 1)`. This is useful after web login where
+    /// the token may only be set in memory.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(true)` if the token was saved
+    /// - `Ok(false)` if no token was available
+    /// - `Err` if saving failed
+    pub fn save_current_auth_token(&mut self) -> Result<bool> {
+        if let Some(token) = self.get_auth_token() {
+            let secret_token = SecretString::from(token);
+            self.set_auth_token(&secret_token, true)?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
     /// Log out the current user.
     ///
     /// This clears credentials but keeps the local database and synced files.

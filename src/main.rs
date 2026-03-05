@@ -207,7 +207,7 @@ fn run_foreground_mode(cli: Cli) -> Result<()> {
             let mut client_guard = client
                 .lock()
                 .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
-            client_guard.authenticate(&username, &pwd, cli.save_password)?;
+            client_guard.authenticate(&username, &pwd, cli.should_save_credentials())?;
             drop(client_guard);
             print_status(StatusIndicator::Success, "Authentication credentials set");
             Some(pwd)
@@ -217,14 +217,14 @@ fn run_foreground_mode(cli: Cli) -> Result<()> {
             let mut client_guard = client
                 .lock()
                 .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
-            client_guard.set_auth_token(&token, cli.save_password)?;
+            client_guard.set_auth_token(&token, cli.should_save_credentials())?;
             drop(client_guard);
             print_status(StatusIndicator::Success, "Authentication token set");
             None
         }
         AuthMethod::NeedsInteractive => {
             // No credentials - prompt user for authentication method
-            handle_interactive_auth(&client, cli.save_password)?
+            handle_interactive_auth(&client, cli.should_save_credentials())?
         }
     };
 
@@ -424,9 +424,9 @@ fn handle_web_login(client: &Arc<Mutex<PCloudClient>>, save_credentials: bool) -
             .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
         client_guard.wait_for_web_auth(&session.request_id)?;
 
-        // Save credentials if requested
+        // Explicitly persist the token to the database
         if save_credentials {
-            // The token is already saved by wait_for_web_auth on success
+            client_guard.save_current_auth_token()?;
         }
     }
 
@@ -748,7 +748,7 @@ fn run_daemon_mode(cli: Cli) -> Result<()> {
                 "Authentication required before daemon can start",
             );
 
-            let auth_result = handle_interactive_auth(&client, cli.save_password)?;
+            let auth_result = handle_interactive_auth(&client, cli.should_save_credentials())?;
             (auth_result, None)
         }
     };
@@ -786,13 +786,13 @@ fn run_daemon_mode(cli: Cli) -> Result<()> {
             let mut client_guard = client
                 .lock()
                 .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
-            client_guard.authenticate(username, pwd, cli.save_password)?;
+            client_guard.authenticate(username, pwd, cli.should_save_credentials())?;
         }
     } else if let Some(ref token) = auth_token {
         let mut client_guard = client
             .lock()
             .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
-        client_guard.set_auth_token(token, cli.save_password)?;
+        client_guard.set_auth_token(token, cli.should_save_credentials())?;
     }
 
     // Prepare mountpoint before starting sync (psync_start_sync mounts the FS)

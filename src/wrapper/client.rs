@@ -604,21 +604,49 @@ impl PCloudClient {
 
     /// Check if credentials are already saved in the database.
     ///
-    /// This checks if an auth token exists that can be used for automatic login.
+    /// This checks the SQLite database for a persisted auth token or
+    /// username/password pair that can be used for automatic login.
+    /// The in-memory auth buffer (`psync_get_auth_string`) is not
+    /// populated until after login succeeds, so we query the DB directly.
     ///
     /// # Returns
     ///
     /// `true` if saved credentials exist, `false` otherwise.
     pub fn has_saved_credentials(&self) -> bool {
-        // Check if we have a saved auth string
-        let auth_ptr = unsafe { raw::psync_get_auth_string() };
-        if auth_ptr.is_null() {
-            return false;
+        // Check the database for a saved auth token
+        let auth_key = std::ffi::CString::new("auth").unwrap();
+        let auth_ptr = unsafe { raw::psync_get_string_value(auth_key.as_ptr()) };
+        if !auth_ptr.is_null() {
+            let auth_str = unsafe { std::ffi::CStr::from_ptr(auth_ptr) };
+            let has_auth = !auth_str.to_bytes().is_empty();
+            unsafe { raw::psync_free(auth_ptr as *mut _) };
+            if has_auth {
+                return true;
+            }
         }
 
-        // Check if the auth string is non-empty
-        let auth_str = unsafe { std::ffi::CStr::from_ptr(auth_ptr) };
-        !auth_str.to_bytes().is_empty()
+        // Check for saved username + password
+        let user_key = std::ffi::CString::new("user").unwrap();
+        let user_ptr = unsafe { raw::psync_get_string_value(user_key.as_ptr()) };
+        if !user_ptr.is_null() {
+            let user_str = unsafe { std::ffi::CStr::from_ptr(user_ptr) };
+            let has_user = !user_str.to_bytes().is_empty();
+            unsafe { raw::psync_free(user_ptr as *mut _) };
+            if has_user {
+                let pass_key = std::ffi::CString::new("pass").unwrap();
+                let pass_ptr = unsafe { raw::psync_get_string_value(pass_key.as_ptr()) };
+                if !pass_ptr.is_null() {
+                    let pass_str = unsafe { std::ffi::CStr::from_ptr(pass_ptr) };
+                    let has_pass = !pass_str.to_bytes().is_empty();
+                    unsafe { raw::psync_free(pass_ptr as *mut _) };
+                    if has_pass {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
     }
 }
 
