@@ -445,7 +445,7 @@ extern "C" {
     /// # Safety
     ///
     /// `req_id` must be a valid pointer. On success, `*req_id` must be freed with `psync_free()`.
-    pub fn get_login_req_id(req_id: *mut *mut c_char) -> c_int;
+    pub fn psync_get_login_req_id(req_id: *mut *mut c_char) -> c_int;
 
     /// Wait for authentication token after web login.
     ///
@@ -454,7 +454,7 @@ extern "C" {
     ///
     /// # Arguments
     ///
-    /// * `request_id` - The request ID obtained from `get_login_req_id()`
+    /// * `request_id` - The request ID obtained from `psync_get_login_req_id()`
     ///
     /// # Returns
     ///
@@ -465,7 +465,7 @@ extern "C" {
     /// # Safety
     ///
     /// `request_id` must be a valid null-terminated C string.
-    pub fn wait_auth_token(request_id: *const c_char) -> c_int;
+    pub fn psync_wait_auth_token(request_id: *const c_char) -> c_int;
 
     /// Get the machine name (hostname).
     ///
@@ -480,7 +480,7 @@ extern "C" {
     /// # Safety
     ///
     /// The returned pointer must be freed by the caller.
-    pub fn get_machine_name() -> *mut c_char;
+    pub fn get_pc_name() -> *mut c_char;
 }
 
 // ============================================================================

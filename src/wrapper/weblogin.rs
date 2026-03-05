@@ -100,7 +100,7 @@ pub struct WebLoginSession {
 /// Returns the machine hostname or a default value if the call fails.
 pub fn get_machine_name_safe() -> String {
     unsafe {
-        let ptr = raw::get_machine_name();
+        let ptr = raw::get_pc_name();
         if ptr.is_null() {
             return "pcloud-cli".to_string();
         }
@@ -242,7 +242,7 @@ fn build_login_url(request_id: &str, config: &WebLoginConfig) -> Result<String> 
 pub fn initiate_web_login(config: &WebLoginConfig) -> Result<WebLoginSession> {
     let mut req_id_ptr: *mut libc::c_char = std::ptr::null_mut();
 
-    let result = unsafe { raw::get_login_req_id(&mut req_id_ptr) };
+    let result = unsafe { raw::psync_get_login_req_id(&mut req_id_ptr) };
 
     if result != 0 {
         return Err(PCloudError::WebLogin(if result == -1 {
@@ -288,7 +288,7 @@ pub fn wait_for_web_auth(request_id: &str) -> Result<()> {
         )))
     })?;
 
-    let result = unsafe { raw::wait_auth_token(c_request_id.as_ptr()) };
+    let result = unsafe { raw::psync_wait_auth_token(c_request_id.as_ptr()) };
 
     match result {
         0 => Ok(()),
