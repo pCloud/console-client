@@ -224,8 +224,7 @@ fn run_foreground_mode(cli: Cli) -> Result<()> {
         }
         AuthMethod::NeedsInteractive => {
             // No credentials - prompt user for authentication method
-            let auth_result = handle_interactive_auth(&client, cli.save_password)?;
-            auth_result
+            handle_interactive_auth(&client, cli.save_password)?
         }
     };
 
@@ -448,7 +447,7 @@ fn get_crypto_password(cli: &Cli, password: Option<&SecretString>) -> Result<Opt
     } else if cli.crypto_prompt {
         // Prompt for separate crypto password
         print_step("Crypto password required");
-        let pwd = prompt_for_password("Crypto password: ").map_err(|e| PCloudError::Io(e))?;
+        let pwd = prompt_for_password("Crypto password: ").map_err(PCloudError::Io)?;
         Ok(Some(pwd))
     } else {
         Ok(None)
@@ -530,7 +529,7 @@ fn run_command_loop(client: Arc<Mutex<PCloudClient>>) -> Result<()> {
 
 /// Handle the 'startcrypto' command.
 fn handle_start_crypto(client: &Arc<Mutex<PCloudClient>>) -> Result<()> {
-    let pwd = prompt_for_password("Crypto password: ").map_err(|e| PCloudError::Io(e))?;
+    let pwd = prompt_for_password("Crypto password: ").map_err(PCloudError::Io)?;
 
     let secure_pwd = SecretString::from(pwd.expose_secret().to_string());
 

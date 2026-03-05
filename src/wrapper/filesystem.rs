@@ -165,7 +165,7 @@ impl PCloudClient {
     /// # Arguments
     ///
     /// * `mountpoint` - Path where the filesystem should be mounted.
-    ///                  Must be an existing directory.
+    ///   Must be an existing directory.
     ///
     /// # Errors
     ///
@@ -636,7 +636,7 @@ impl PCloudClient {
         // Read each folder from the list
         for i in 0..list.foldercnt {
             // Safety: folders array has foldercnt elements
-            let folder = unsafe { &*list.folders.as_ptr().add(i as usize) };
+            let folder = unsafe { &*list.folders.as_ptr().add(i) };
 
             // Get local path
             let local_path = if !folder.localpath.is_null() {

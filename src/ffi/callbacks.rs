@@ -520,7 +520,7 @@ impl CallbackConfig {
 ///
 /// These pointers are the extern "C" trampoline functions that can be
 /// passed directly to pclsync functions like `psync_start_sync`.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct CallbackPointers {
     /// Status change callback function pointer.
     pub status: pstatus_change_callback_t,
@@ -533,17 +533,6 @@ pub struct CallbackPointers {
 
     /// Filesystem start callback function pointer.
     pub fs_start: psync_generic_callback_t,
-}
-
-impl Default for CallbackPointers {
-    fn default() -> Self {
-        Self {
-            status: None,
-            event: None,
-            notification: None,
-            fs_start: None,
-        }
-    }
 }
 
 // ============================================================================

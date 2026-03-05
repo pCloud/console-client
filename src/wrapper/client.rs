@@ -47,9 +47,10 @@ use crate::ffi::types::pstatus_t;
 static PCLOUD_CLIENT: OnceCell<Arc<Mutex<PCloudClient>>> = OnceCell::new();
 
 /// State of authentication with the pCloud service.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum AuthState {
     /// Not authenticated - login required
+    #[default]
     NotAuthenticated,
     /// Authentication in progress
     Authenticating,
@@ -59,16 +60,11 @@ pub enum AuthState {
     Failed(String),
 }
 
-impl Default for AuthState {
-    fn default() -> Self {
-        AuthState::NotAuthenticated
-    }
-}
-
 /// State of crypto (encryption) operations.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum CryptoState {
     /// Crypto has not been set up for this account
+    #[default]
     NotSetup,
     /// Crypto is set up but not started (locked)
     SetupComplete,
@@ -78,12 +74,6 @@ pub enum CryptoState {
     Stopped,
     /// Crypto operation failed with error message
     Failed(String),
-}
-
-impl Default for CryptoState {
-    fn default() -> Self {
-        CryptoState::NotSetup
-    }
 }
 
 /// Main client for interacting with pCloud services.

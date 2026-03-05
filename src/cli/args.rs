@@ -34,7 +34,7 @@ use clap::Parser;
 /// - Web-based login (opens browser with QR code)
 /// - Manual username/password entry
 /// - Auth token entry
-#[derive(Parser, Debug, Clone)]
+#[derive(Parser, Debug, Clone, Default)]
 #[command(name = "pcloud")]
 #[command(version = env!("PCLOUD_VERSION"), about = "pCloud Console Client")]
 #[command(long_about = "Mount pCloud storage as a local filesystem.\n\n\
@@ -98,24 +98,6 @@ pub struct Cli {
     /// Save credentials for automatic login
     #[arg(short = 's', long = "savepassword")]
     pub save_password: bool,
-}
-
-impl Default for Cli {
-    fn default() -> Self {
-        Self {
-            username: None,
-            password_prompt: false,
-            auth_token: None,
-            crypto_prompt: false,
-            use_password_as_crypto: false,
-            daemonize: false,
-            commands_mode: false,
-            mountpoint: None,
-            commands_only: false,
-            newuser: false,
-            save_password: false,
-        }
-    }
 }
 
 impl Cli {

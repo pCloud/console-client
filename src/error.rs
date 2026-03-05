@@ -414,7 +414,7 @@ impl FfiError {
             6 => "Database error".to_string(),
             7 => "Local folder access denied".to_string(),
             8 => "Remote folder access denied".to_string(),
-            _ => format!("Unknown initialization error"),
+            _ => "Unknown initialization error".to_string(),
         };
         FfiError::InitFailed { code, message }
     }

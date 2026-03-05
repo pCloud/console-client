@@ -25,7 +25,7 @@
 //! ```
 
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn main() {
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
@@ -55,7 +55,7 @@ fn main() {
         // GCC 14+ compiler demotion of certain warnings.
         .flag_if_supported("-Wno-error=int-conversion")
         .flag_if_supported("-Wno-error=incompatible-pointer-types")
-        .define("PSYNC_DEFAULT_POSIX_SUBDIR", "\"cli\"");
+        .define("PSYNC_DEFAULT_POSIX_DIR", "\".pcloud-cli\"");
 
     // Set DEBUG_LEVEL for debug builds (D_NOTICE = 50)
     let profile = env::var("PROFILE").unwrap_or_default();
@@ -188,7 +188,7 @@ fn main() {
 /// - Callback function pointer types
 /// - Event types and data structures
 /// - Folder/file list types
-fn generate_bindings(pclsync_dir: &PathBuf, out_dir: &PathBuf, target_os: &str) {
+fn generate_bindings(pclsync_dir: &Path, out_dir: &Path, target_os: &str) {
     let header_path = pclsync_dir.join("psynclib.h");
 
     if !header_path.exists() {
@@ -308,6 +308,7 @@ fn configure_linux(build: &mut cc::Build, _pclsync_dir: &PathBuf) {
     build.define("P_OS_LINUX", None);
     // Note: _GNU_SOURCE is defined in pcompat.h, so we don't need to define it again
     build.define("_FILE_OFFSET_BITS", "64");
+    build.define("_GNU_SOURCE", None);
 
     // Use OpenSSL 3.x on Linux
     build.define("P_SSL_OPENSSL3", None);

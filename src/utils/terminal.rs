@@ -269,7 +269,7 @@ pub fn print_centered(text: &str) {
     }
 
     let padding = (term_width - text_len) / 2;
-    let spaces: String = std::iter::repeat(' ').take(padding).collect();
+    let spaces = " ".repeat(padding);
     println!("{}{}", spaces, text);
 }
 
@@ -277,7 +277,7 @@ pub fn print_centered(text: &str) {
 pub fn print_horizontal_line() {
     let term_width = terminal_width();
     let line_char = if supports_unicode() { '\u{2500}' } else { '-' };
-    let line: String = std::iter::repeat(line_char).take(term_width).collect();
+    let line: String = std::iter::repeat_n(line_char, term_width).collect();
     println!("{}", line);
 }
 
