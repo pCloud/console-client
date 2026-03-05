@@ -329,7 +329,7 @@ All FFI code follows these guidelines:
 ### Commit Messages
 
 - Follow the commit message guide in `COMMIT.md`
-- **Do NOT** append a "Co-Authored-By:" line or any similar suffix to generated commit messages
+- **Do NOT** append a "Co-Authored-By:" line or any similar footer to generated commit messages
 
 ### Adding New FFI Functions
 
