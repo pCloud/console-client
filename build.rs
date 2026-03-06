@@ -453,16 +453,12 @@ fn link_system_libraries(target_os: &str) {
             // Link libraries on macOS
             // Try pkg-config first, fall back to direct linking
 
-            // FUSE (osxfuse or macfuse)
-            if pkg_config::Config::new().probe("osxfuse").is_err()
-                && pkg_config::Config::new().probe("fuse").is_err()
-            {
-                println!("cargo:rustc-link-lib=osxfuse");
-                // Common library search paths on macOS
-                println!("cargo:rustc-link-search=/usr/local/lib");
-                println!("cargo:rustc-link-search=/opt/homebrew/lib");
-                println!("cargo:rustc-link-search=/Library/Frameworks/macFUSE.framework/Libraries");
-            }
+            // FUSE (macFUSE) — link directly; pkg-config is unreliable
+            // when cross-compiling (e.g. arm64 pkg-config on x86_64 target).
+            // macFUSE installs a universal dylib at /usr/local/lib/libfuse.dylib.
+            println!("cargo:rustc-link-lib=fuse");
+            println!("cargo:rustc-link-search=/usr/local/lib");
+            println!("cargo:rustc-link-search=/opt/homebrew/lib");
 
             // SQLite3
             link_with_pkgconfig_or_fallback("sqlite3", "sqlite3");
@@ -478,8 +474,14 @@ fn link_system_libraries(target_os: &str) {
                 println!("cargo:rustc-link-search=/opt/homebrew/opt/openssl@3/lib");
             }
 
+            // zlib for pcompression.c (deflate/inflate)
+            println!("cargo:rustc-link-lib=z");
+
             // Cocoa framework for macOS
             println!("cargo:rustc-link-lib=framework=Cocoa");
+
+            // IOKit framework for pdevice_monitor.c (USB device monitoring)
+            println!("cargo:rustc-link-lib=framework=IOKit");
         }
         _ => {
             // Fallback: try to link common libraries

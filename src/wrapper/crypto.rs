@@ -288,7 +288,7 @@ impl PCloudClient {
     /// Unix timestamp of when crypto expires, or 0 if never set up.
     pub fn crypto_expires(&self) -> i64 {
         // Safety: psync_crypto_expires is safe to call anytime
-        unsafe { raw::psync_crypto_expires() }
+        unsafe { raw::psync_crypto_expires() as i64 }
     }
 
     /// Get the crypto password hint.

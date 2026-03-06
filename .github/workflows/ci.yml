@@ -16,7 +16,6 @@ env:
   RELEASE_BUILD: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v')) }}
 
 jobs:
-  # 1. New setup job to create the lowercase repository variable
   setup:
     runs-on: ubuntu-latest
     outputs:
@@ -28,7 +27,7 @@ jobs:
   lint:
     needs: setup
     runs-on: ubuntu-latest
-    container: ghcr.io/${{ needs.setup.outputs.repo_lc }}/ci:1.0
+    container: ghcr.io/${{ needs.setup.outputs.repo_lc }}/ci:2.0
     steps:
       - uses: actions/checkout@v4
         with:
@@ -54,10 +53,31 @@ jobs:
         run: cargo check
 
   build-and-test:
-    needs: setup # 2. Require the setup job to finish first
-    runs-on: ubuntu-latest
-    # 3. Use the output from the setup job
-    container: ghcr.io/${{ needs.setup.outputs.repo_lc }}/ci:1.0
+    needs: setup
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            use-container: true
+            artifact-name: linux-amd64
+            strip-cmd: strip
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            use-container: true
+            artifact-name: linux-arm64
+            strip-cmd: strip
+          - target: armv7-unknown-linux-gnueabihf
+            runner: ubuntu-24.04-arm
+            use-container: true
+            artifact-name: linux-armhf
+            strip-cmd: arm-linux-gnueabihf-strip
+            cc: arm-linux-gnueabihf-gcc
+            pkg-config-path: /usr/lib/arm-linux-gnueabihf/pkgconfig
+            bindgen-target: arm-linux-gnueabihf
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.use-container && format('ghcr.io/{0}/ci:2.0', needs.setup.outputs.repo_lc) || '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -70,8 +90,8 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}
-          restore-keys: cargo-${{ runner.os }}-
+          key: cargo-${{ matrix.target }}-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}
+          restore-keys: cargo-${{ matrix.target }}-
 
       - name: Build
         run: |
@@ -79,28 +99,125 @@ jobs:
           if [ "$RELEASE_BUILD" = "true" ]; then
             FEATURES="--features crash-reporting"
           fi
-          cargo build --release $FEATURES
+          cargo build --release --target ${{ matrix.target }} $FEATURES
         env:
           BUGSNAG_API_KEY: ${{ secrets.BUGSNAG_API_KEY }}
+          CC: ${{ matrix.cc || '' }}
+          PKG_CONFIG_PATH: ${{ matrix.pkg-config-path || env.PKG_CONFIG_PATH || '' }}
+          PKG_CONFIG_ALLOW_CROSS: ${{ matrix.cc && '1' || '' }}
+          BINDGEN_EXTRA_CLANG_ARGS: ${{ matrix.bindgen-target && format('--target={0} --sysroot=/usr/{0}', matrix.bindgen-target) || '' }}
 
       - name: Test
-        run: cargo test --release
+        run: cargo test --release --target ${{ matrix.target }}
+        env:
+          CC: ${{ matrix.cc || '' }}
+          PKG_CONFIG_PATH: ${{ matrix.pkg-config-path || env.PKG_CONFIG_PATH || '' }}
+          PKG_CONFIG_ALLOW_CROSS: ${{ matrix.cc && '1' || '' }}
+          BINDGEN_EXTRA_CLANG_ARGS: ${{ matrix.bindgen-target && format('--target={0} --sysroot=/usr/{0}', matrix.bindgen-target) || '' }}
 
       - name: Upload binary
         if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v'))
         uses: actions/upload-artifact@v4
         with:
-          name: binary
-          path: target/release/pcloud
+          name: binary-${{ matrix.artifact-name }}
+          path: target/${{ matrix.target }}/release/pcloud
+          retention-days: 5
+
+  build-macos:
+    needs: setup
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install native (arm64) dependencies
+        run: |
+          brew install macfuse sqlite openssl llvm pkg-config
+          echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> $GITHUB_ENV
+
+      - name: Install x86_64 dependencies via Rosetta
+        run: |
+          arch -x86_64 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+          arch -x86_64 /usr/local/bin/brew install openssl@3 sqlite
+
+      - name: Add x86_64 target
+        run: rustup target add x86_64-apple-darwin
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: cargo-macos-universal-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}
+          restore-keys: cargo-macos-universal-
+
+      - name: Build aarch64
+        run: |
+          FEATURES=""
+          if [ "$RELEASE_BUILD" = "true" ]; then
+            FEATURES="--features crash-reporting"
+          fi
+          cargo build --release --target aarch64-apple-darwin $FEATURES
+        env:
+          BUGSNAG_API_KEY: ${{ secrets.BUGSNAG_API_KEY }}
+          PKG_CONFIG_PATH: /opt/homebrew/opt/openssl@3/lib/pkgconfig:/opt/homebrew/opt/sqlite/lib/pkgconfig
+
+      - name: Build x86_64
+        run: |
+          FEATURES=""
+          if [ "$RELEASE_BUILD" = "true" ]; then
+            FEATURES="--features crash-reporting"
+          fi
+          cargo build --release --target x86_64-apple-darwin $FEATURES
+        env:
+          BUGSNAG_API_KEY: ${{ secrets.BUGSNAG_API_KEY }}
+          PKG_CONFIG_PATH: /usr/local/opt/openssl@3/lib/pkgconfig:/usr/local/opt/sqlite/lib/pkgconfig
+
+      - name: Test (native aarch64 only)
+        run: cargo test --release --target aarch64-apple-darwin
+
+      - name: Create universal binary
+        run: |
+          lipo -create -output pcloud-macos-universal \
+            target/aarch64-apple-darwin/release/pcloud \
+            target/x86_64-apple-darwin/release/pcloud
+          lipo -info pcloud-macos-universal
+          strip pcloud-macos-universal
+
+      - name: Upload universal binary
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v'))
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-macos-universal
+          path: pcloud-macos-universal
           retention-days: 5
 
   package:
     runs-on: ubuntu-latest
-    # 4. Include setup in the needs array to access its outputs here
-    needs: [setup, build-and-test]
+    needs: [setup, lint, build-and-test]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v'))
-    # 5. Use the output from the setup job
-    container: ghcr.io/${{ needs.setup.outputs.repo_lc }}/ci:latest
+    container: ghcr.io/${{ needs.setup.outputs.repo_lc }}/ci:2.0
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            artifact-name: linux-amd64
+            strip-cmd: strip
+            deb-arch: amd64
+            rpm-arch: x86_64
+          - target: aarch64-unknown-linux-gnu
+            artifact-name: linux-arm64
+            strip-cmd: aarch64-linux-gnu-strip
+            deb-arch: arm64
+            rpm-arch: aarch64
+          - target: armv7-unknown-linux-gnueabihf
+            artifact-name: linux-armhf
+            strip-cmd: arm-linux-gnueabihf-strip
+            deb-arch: armhf
+            rpm-arch: armv7hl
     steps:
       - uses: actions/checkout@v4
         with:
@@ -108,48 +225,71 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: binary
-          path: target/release/
+          name: binary-${{ matrix.artifact-name }}
+          path: target/${{ matrix.target }}/release/
 
       - name: Ensure binary is executable
-        run: chmod +x target/release/pcloud
+        run: chmod +x target/${{ matrix.target }}/release/pcloud
 
       - name: Build .deb
-        run: cargo deb --no-build
+        run: cargo deb --no-build --target ${{ matrix.target }}
 
       - name: Build .rpm
-        run: cargo generate-rpm
+        run: cargo generate-rpm --target ${{ matrix.target }}
 
       - name: Strip binary
-        run: strip target/release/pcloud
+        run: ${{ matrix.strip-cmd }} target/${{ matrix.target }}/release/pcloud
 
       - name: Upload packages
         uses: actions/upload-artifact@v4
         with:
-          name: packages
+          name: packages-${{ matrix.artifact-name }}
           retention-days: 30
           path: |
-            target/debian/*.deb
-            target/generate-rpm/*.rpm
-            target/release/pcloud
+            target/${{ matrix.target }}/debian/*.deb
+            target/${{ matrix.target }}/generate-rpm/*.rpm
+            target/${{ matrix.target }}/release/pcloud
 
   release:
     runs-on: ubuntu-latest
-    needs: package
+    needs: [package, build-macos]
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: packages
+          path: artifacts/
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+
+          # Linux binaries and packages
+          for arch in linux-amd64 linux-arm64 linux-armhf; do
+            if [ -d "artifacts/packages-${arch}" ]; then
+              # Rename binary with arch suffix
+              cp "artifacts/packages-${arch}/release/pcloud" "release/pcloud-${arch}" 2>/dev/null || \
+              cp "artifacts/packages-${arch}/"*/release/pcloud "release/pcloud-${arch}" 2>/dev/null || true
+
+              # Copy .deb packages
+              find "artifacts/packages-${arch}" -name '*.deb' -exec cp {} release/ \; 2>/dev/null || true
+
+              # Copy .rpm packages
+              find "artifacts/packages-${arch}" -name '*.rpm' -exec cp {} release/ \; 2>/dev/null || true
+            fi
+          done
+
+          # macOS universal binary
+          if [ -d "artifacts/binary-macos-universal" ]; then
+            cp "artifacts/binary-macos-universal/pcloud-macos-universal" "release/pcloud-macos-universal" 2>/dev/null || true
+          fi
+
+          ls -la release/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: ${{ github.ref_name }}
           generate_release_notes: true
-          files: |
-            debian/*.deb
-            generate-rpm/*.rpm
-            release/pcloud
+          files: release/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

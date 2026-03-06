@@ -11,6 +11,9 @@ on:
 permissions:
   packages: write
 
+env:
+  RUST_VERSION: '1.94.0'
+
 jobs:
   build-image:
     runs-on: ubuntu-latest
@@ -23,15 +26,23 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 1. Convert the repository name to lowercase
       - name: Set lowercase repository name
         run: |
           echo "REPO_LC=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
 
       - uses: docker/build-push-action@v6
         with:
           context: .github
           file: .github/Dockerfile
+          platforms: linux/amd64,linux/arm64
           push: true
-          # 2. Replaced ${{ github.repository }} with ${{ env.REPO_LC }}
-          tags: ghcr.io/${{ env.REPO_LC }}/ci:1.0
+          build-args: |
+            RUST_VERSION=${{ env.RUST_VERSION }}
+          tags: |
+            ghcr.io/${{ env.REPO_LC }}/ci:2.0
+            ghcr.io/${{ env.REPO_LC }}/ci:2.0-rust-${{ env.RUST_VERSION }}
+            ghcr.io/${{ env.REPO_LC }}/ci:latest
