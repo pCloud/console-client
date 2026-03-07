@@ -334,38 +334,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "console-client"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "assert_cmd",
- "bincode",
- "bindgen",
- "bugsnag",
- "cc",
- "clap",
- "crash-handler",
- "ctrlc",
- "daemonize",
- "dirs",
- "libc",
- "minidumper",
- "nix 0.29.0",
- "obfstr",
- "once_cell",
- "pkg-config",
- "predicates",
- "qrcode",
- "rpassword",
- "secrecy",
- "serde",
- "tempfile",
- "thiserror 2.0.17",
- "ureq",
- "zeroize",
-]
-
-[[package]]
 name = "crash-context"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1023,6 +991,38 @@ dependencies = [
  "redox_syscall",
  "smallvec",
  "windows-link",
+]
+
+[[package]]
+name = "pcloud-cli"
+version = "3.0.0-preview-01"
+dependencies = [
+ "anyhow",
+ "assert_cmd",
+ "bincode",
+ "bindgen",
+ "bugsnag",
+ "cc",
+ "clap",
+ "crash-handler",
+ "ctrlc",
+ "daemonize",
+ "dirs",
+ "libc",
+ "minidumper",
+ "nix 0.29.0",
+ "obfstr",
+ "once_cell",
+ "pkg-config",
+ "predicates",
+ "qrcode",
+ "rpassword",
+ "secrecy",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.17",
+ "ureq",
+ "zeroize",
 ]
 
 [[package]]
