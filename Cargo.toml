@@ -1,0 +1,83 @@
+[package]
+name = "console-client"
+version = "0.1.0"
+edition = "2021"
+description = "pCloud console client - Rust rewrite"
+license = "BSD-3-Clause"
+homepage = "https://www.pcloud.com"
+repository = "https://github.com/pCloud/console-client"
+
+[lib]
+name = "console_client"
+path = "src/lib.rs"
+
+[[bin]]
+name = "pcloud"
+path = "src/main.rs"
+
+[features]
+default = []
+crash-reporting = ["dep:bugsnag", "dep:obfstr", "dep:crash-handler", "dep:minidumper", "dep:ureq"]
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+thiserror = "2.0"
+anyhow = "1.0"
+secrecy = { version = "0.10", features = ["serde"] }
+zeroize = "1.8"
+rpassword = "7.3"
+daemonize = "0.5"
+serde = { version = "1.0", features = ["derive"] }
+bincode = "1.3"
+once_cell = "1.19"
+libc = "0.2"
+ctrlc = "3.4"
+qrcode = "0.14"
+dirs = "5.0"
+bugsnag = { version = "0.2", optional = true }
+obfstr = { version = "0.4", optional = true }
+crash-handler = { version = "0.7", optional = true }
+minidumper = { version = "0.9", optional = true }
+ureq = { version = "3", optional = true }
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.29", features = ["signal", "process"] }
+
+[build-dependencies]
+cc = "1.0"
+bindgen = "0.70"
+pkg-config = "0.3"
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "3.1"
+tempfile = "3.10"
+
+# ── Packaging ────────────────────────────────────────────────
+
+[package.metadata.deb]
+maintainer = "pCloud <support@pcloud.com>"
+section = "net"
+priority = "optional"
+extended-description = """\
+pCloud console client for Linux. \
+Mounts your pCloud drive as a virtual FUSE filesystem, \
+supports encrypted (Crypto) folders, and runs as a daemon."""
+depends = "libfuse2, libsqlite3-0, libssl3, zlib1g, libudev1"
+assets = [
+    ["target/release/pcloud", "usr/bin/", "755"],
+    ["LICENSE", "usr/share/doc/pcloud/copyright", "644"],
+]
+
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/pcloud", dest = "/usr/bin/pcloud", mode = "0755" },
+    { source = "LICENSE", dest = "/usr/share/licenses/pcloud/LICENSE", mode = "0644" },
+]
+
+[package.metadata.generate-rpm.requires]
+fuse-libs = "*"
+sqlite-libs = "*"
+openssl-libs = ">= 3.0"
+zlib = "*"
+systemd-libs = "*"

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+#
+# Pre-commit hook: runs formatting, lint, and compile checks.
+# Install with: git config core.hooksPath .githooks
+#
+set -e
+
+echo "==> Checking formatting..."
+cargo fmt --check
+
+echo "==> Running clippy..."
+cargo clippy -- -D warnings
+
+echo "==> Running cargo check..."
+cargo check
+
+echo "==> Running tests..."
+cargo test
+
+echo "All checks passed."
