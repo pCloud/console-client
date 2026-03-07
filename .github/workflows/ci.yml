@@ -285,11 +285,103 @@ jobs:
 
           ls -la release/
 
+      - name: Detect package filenames
+        id: pkgnames
+        run: |
+          echo "deb_amd64=$(basename release/*_amd64.deb 2>/dev/null || echo '')" >> "$GITHUB_OUTPUT"
+          echo "deb_arm64=$(basename release/*_arm64.deb 2>/dev/null || echo '')" >> "$GITHUB_OUTPUT"
+          echo "deb_armhf=$(basename release/*_armhf.deb 2>/dev/null || echo '')" >> "$GITHUB_OUTPUT"
+          echo "rpm_x86_64=$(basename release/*.x86_64.rpm 2>/dev/null || echo '')" >> "$GITHUB_OUTPUT"
+          echo "rpm_aarch64=$(basename release/*.aarch64.rpm 2>/dev/null || echo '')" >> "$GITHUB_OUTPUT"
+          echo "rpm_armv7hl=$(basename release/*.armv7hl.rpm 2>/dev/null || echo '')" >> "$GITHUB_OUTPUT"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: ${{ github.ref_name }}
           generate_release_notes: true
           files: release/*
+          body: |
+            ## Installation
+
+            ### Linux — x86_64 (64-bit Intel/AMD)
+
+            ```bash
+            curl -L -o pcloud https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/pcloud-linux-amd64
+            chmod +x pcloud && sudo mv pcloud /usr/local/bin/
+            ```
+
+            ### Linux — ARM 64-bit (Raspberry Pi 4/5, AWS Graviton, etc.)
+
+            ```bash
+            curl -L -o pcloud https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/pcloud-linux-arm64
+            chmod +x pcloud && sudo mv pcloud /usr/local/bin/
+            ```
+
+            ### Linux — ARM 32-bit (Raspberry Pi 2/3, older ARM boards)
+
+            ```bash
+            curl -L -o pcloud https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/pcloud-linux-armhf
+            chmod +x pcloud && sudo mv pcloud /usr/local/bin/
+            ```
+
+            ### Debian / Ubuntu — x86_64
+
+            ```bash
+            curl -L -O https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ steps.pkgnames.outputs.deb_amd64 }}
+            sudo dpkg -i ${{ steps.pkgnames.outputs.deb_amd64 }}
+            ```
+
+            ### Debian / Ubuntu — ARM 64-bit
+
+            ```bash
+            curl -L -O https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ steps.pkgnames.outputs.deb_arm64 }}
+            sudo dpkg -i ${{ steps.pkgnames.outputs.deb_arm64 }}
+            ```
+
+            ### Debian / Ubuntu — ARM 32-bit
+
+            ```bash
+            curl -L -O https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ steps.pkgnames.outputs.deb_armhf }}
+            sudo dpkg -i ${{ steps.pkgnames.outputs.deb_armhf }}
+            ```
+
+            ### Fedora / RHEL — x86_64
+
+            ```bash
+            curl -L -O https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ steps.pkgnames.outputs.rpm_x86_64 }}
+            sudo rpm -i ${{ steps.pkgnames.outputs.rpm_x86_64 }}
+            ```
+
+            ### Fedora / RHEL — ARM 64-bit
+
+            ```bash
+            curl -L -O https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ steps.pkgnames.outputs.rpm_aarch64 }}
+            sudo rpm -i ${{ steps.pkgnames.outputs.rpm_aarch64 }}
+            ```
+
+            ### Fedora / RHEL — ARM 32-bit
+
+            ```bash
+            curl -L -O https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ steps.pkgnames.outputs.rpm_armv7hl }}
+            sudo rpm -i ${{ steps.pkgnames.outputs.rpm_armv7hl }}
+            ```
+
+            ### Arch Linux (build from source)
+
+            A [PKGBUILD](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/pkg/arch/PKGBUILD) is included in the repository for x86_64, aarch64, and armv7h:
+
+            ```bash
+            curl -L -O https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/pkg/arch/PKGBUILD
+            makepkg -si
+            ```
+
+            ### macOS (Apple Silicon & Intel)
+
+            ```bash
+            brew install macfuse openssl@3 sqlite
+            curl -L -o pcloud https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/pcloud-macos-universal
+            chmod +x pcloud && sudo mv pcloud /usr/local/bin/
+            ```
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

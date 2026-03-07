@@ -1,9 +1,21 @@
-# pCloud Console Client
+pCloud Console Client
+---------------------
+[![CI](https://github.com/pCloud/console-client/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/pCloud/console-client/actions/workflows/ci.yml)
+[![Latest Release](https://img.shields.io/github/v/release/pCloud/console-client)](https://github.com/pCloud/console-client/releases/latest)
 
 A command-line client for pCloud in Rust with FFI bindings to the [pclsync](https://github.com/pCloud/pclsync) C filesystem library.
 
->**NOTE:** For the legacy C++/cmake console client's go [here](https://github.com/pCloud/console-client/tree/2.x).
+>Version `2.x` of the console client is available [here](https://github.com/pCloud/console-client/tree/2.x).
 
+## Installation
+
+Pre-built binaries and packages along with installation instructions are available on the [Releases](https://github.com/pCloud/console-client/releases/latest) page for:
+
+- **Linux** — x86_64, ARM 64-bit, ARM 32-bit (`.deb`, `.rpm`, and standalone binaries)
+- **macOS** — Universal binary (Apple Silicon & Intel)
+- **Arch Linux** — PKGBUILD included in the repository at [`pkg/arch/PKGBUILD`](pkg/arch/PKGBUILD)
+
+To build from source instead, see [Building](#building) below.
 
 ## Features
 
