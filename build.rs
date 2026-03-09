@@ -21,7 +21,7 @@
 //!
 //! ## macOS
 //! ```bash
-//! brew install macfuse sqlite openssl llvm
+//! brew install macfuse openssl llvm
 //! ```
 
 use std::env;
@@ -367,13 +367,6 @@ fn configure_macos(build: &mut cc::Build, _pclsync_dir: &PathBuf) {
     // Note: poverlay_mac.c is included via #include in poverlay.c,
     // so we don't compile it separately
 
-    // Try pkg-config first for all libraries
-    if let Ok(sqlite) = pkg_config::Config::new().probe("sqlite3") {
-        for include in &sqlite.include_paths {
-            build.include(include);
-        }
-    }
-
     // Try to find OpenSSL include path using pkg-config
     if let Ok(openssl) = pkg_config::Config::new().probe("openssl") {
         for include in &openssl.include_paths {
@@ -402,17 +395,11 @@ fn configure_macos(build: &mut cc::Build, _pclsync_dir: &PathBuf) {
         for include in &fuse.include_paths {
             build.include(include);
         }
-    } else if let Ok(osxfuse) = pkg_config::Config::new().probe("osxfuse") {
-        for include in &osxfuse.include_paths {
-            build.include(include);
-        }
     } else {
         // Fall back to common macOS FUSE paths
         let fuse_include_paths = [
-            "/usr/local/include/osxfuse",
             "/usr/local/include/fuse",
             "/opt/homebrew/include/fuse",
-            "/opt/homebrew/include/osxfuse",
             "/Library/Frameworks/macFUSE.framework/Headers",
         ];
 
@@ -460,8 +447,8 @@ fn link_system_libraries(target_os: &str) {
             println!("cargo:rustc-link-search=/usr/local/lib");
             println!("cargo:rustc-link-search=/opt/homebrew/lib");
 
-            // SQLite3
-            link_with_pkgconfig_or_fallback("sqlite3", "sqlite3");
+            // SQLite3 — use system SQLite (always available on macOS)
+            println!("cargo:rustc-link-lib=sqlite3");
 
             // OpenSSL 3.x
             if pkg_config::Config::new().probe("openssl").is_err() {
