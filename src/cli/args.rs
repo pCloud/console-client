@@ -185,6 +185,15 @@ impl Cli {
                 .to_string());
         }
 
+        // Username must not be empty
+        if let Some(ref username) = self.username {
+            if username.trim().is_empty() {
+                return Err("--username value must not be empty. \
+                    Please provide a valid email address."
+                    .to_string());
+            }
+        }
+
         // -p (password_prompt) requires -u (username)
         if self.password_prompt && self.username.is_none() {
             return Err("--password requires --username. \
@@ -222,6 +231,19 @@ impl Cli {
             return Err("Cannot use both --token and --password. \
                 Use --token for token authentication, \
                 or --password for username/password authentication."
+                .to_string());
+        }
+
+        // -o (commands_mode) in foreground mode requires authentication credentials
+        // Without -p or -t, the binary would attempt to initialize pclsync and connect
+        // before entering the command loop, which requires pre-specified credentials
+        if self.commands_mode
+            && !self.commands_only
+            && !self.password_prompt
+            && self.auth_token.is_none()
+        {
+            return Err("--commands requires authentication credentials. \
+                Use --password (-p) or --token (-t) to provide credentials."
                 .to_string());
         }
 
