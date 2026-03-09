@@ -1,6 +1,6 @@
 [package]
 name = "pcloud-cli"
-version = "3.0.0-preview-01"
+version = "3.0.0-preview-02"
 edition = "2021"
 description = "pCloud CLI client"
 license = "BSD-3-Clause"
