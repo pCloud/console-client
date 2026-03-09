@@ -8,7 +8,6 @@
 //! Full IPC server tests require a mock PCloudClient, so some tests
 //! focus on the protocol layer only.
 
-use std::path::PathBuf;
 use std::time::Duration;
 use tempfile::tempdir;
 

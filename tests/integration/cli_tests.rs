@@ -15,7 +15,7 @@ use predicates::prelude::*;
 
 /// Get a Command instance for the console-client binary.
 fn pcloud_cmd() -> Command {
-    Command::cargo_bin("pcloud").unwrap()
+    assert_cmd::cargo_bin_cmd!("pcloud")
 }
 
 // ============================================================================

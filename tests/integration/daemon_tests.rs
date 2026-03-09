@@ -9,7 +9,6 @@
 //! any real daemon processes that might be running.
 
 use std::fs::{self, File};
-use std::io::Write;
 use std::path::PathBuf;
 use tempfile::tempdir;
 
