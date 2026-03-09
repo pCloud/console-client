@@ -36,9 +36,9 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
+            /usr/local/cargo/registry/index/
+            /usr/local/cargo/registry/cache/
+            /usr/local/cargo/git/db/
             target/
           key: cargo-lint-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}
           restore-keys: cargo-lint-${{ runner.os }}-
@@ -86,9 +86,9 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
+            /usr/local/cargo/registry/index/
+            /usr/local/cargo/registry/cache/
+            /usr/local/cargo/git/db/
             target/
           key: cargo-${{ matrix.target }}-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}
           restore-keys: cargo-${{ matrix.target }}-
@@ -131,15 +131,39 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Compute cache key
+        id: cache-key
+        run: echo "week=$(date +%Y-%W)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Homebrew downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/Homebrew/downloads
+          key: brew-arm64-${{ runner.os }}-${{ steps.cache-key.outputs.week }}
+          restore-keys: brew-arm64-${{ runner.os }}-
+
       - name: Install native (arm64) dependencies
-        run: |
-          brew install macfuse sqlite openssl llvm pkg-config
-          echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> $GITHUB_ENV
+        run: brew install macfuse openssl pkg-config
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+
+      - name: Cache Rosetta Homebrew + x86_64 OpenSSL
+        id: cache-rosetta
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/Homebrew
+            /usr/local/Cellar/openssl@3
+            /usr/local/opt/openssl@3
+            /usr/local/bin/brew
+          key: brew-rosetta-openssl3-${{ runner.os }}-${{ steps.cache-key.outputs.week }}
+          restore-keys: brew-rosetta-openssl3-${{ runner.os }}-
 
       - name: Install x86_64 dependencies via Rosetta
+        if: steps.cache-rosetta.outputs.cache-hit != 'true'
         run: |
           arch -x86_64 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-          arch -x86_64 /usr/local/bin/brew install openssl@3 sqlite
+          arch -x86_64 /usr/local/bin/brew install openssl@3
 
       - name: Add x86_64 target
         run: rustup target add x86_64-apple-darwin
@@ -163,7 +187,7 @@ jobs:
           cargo build --release --target aarch64-apple-darwin $FEATURES
         env:
           BUGSNAG_API_KEY: ${{ secrets.BUGSNAG_API_KEY }}
-          PKG_CONFIG_PATH: /opt/homebrew/opt/openssl@3/lib/pkgconfig:/opt/homebrew/opt/sqlite/lib/pkgconfig
+          PKG_CONFIG_PATH: /opt/homebrew/opt/openssl@3/lib/pkgconfig
 
       - name: Build x86_64
         run: |
@@ -174,7 +198,7 @@ jobs:
           cargo build --release --target x86_64-apple-darwin $FEATURES
         env:
           BUGSNAG_API_KEY: ${{ secrets.BUGSNAG_API_KEY }}
-          PKG_CONFIG_PATH: /usr/local/opt/openssl@3/lib/pkgconfig:/usr/local/opt/sqlite/lib/pkgconfig
+          PKG_CONFIG_PATH: /usr/local/opt/openssl@3/lib/pkgconfig
 
       - name: Test (native aarch64 only)
         run: cargo test --release --target aarch64-apple-darwin
@@ -308,21 +332,27 @@ jobs:
 
             ```bash
             curl -L -o pcloud https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/pcloud-linux-amd64
-            chmod +x pcloud && sudo mv pcloud /usr/local/bin/
+            chmod +x pcloud && mv pcloud ~/.local/bin/
+            # System-wide install (requires root):
+            # sudo mv pcloud /usr/local/bin/
             ```
 
             ### Linux — ARM 64-bit (Raspberry Pi 4/5, AWS Graviton, etc.)
 
             ```bash
             curl -L -o pcloud https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/pcloud-linux-arm64
-            chmod +x pcloud && sudo mv pcloud /usr/local/bin/
+            chmod +x pcloud && mv pcloud ~/.local/bin/
+            # System-wide install (requires root):
+            # sudo mv pcloud /usr/local/bin/
             ```
 
             ### Linux — ARM 32-bit (Raspberry Pi 2/3, older ARM boards)
 
             ```bash
             curl -L -o pcloud https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/pcloud-linux-armhf
-            chmod +x pcloud && sudo mv pcloud /usr/local/bin/
+            chmod +x pcloud && mv pcloud ~/.local/bin/
+            # System-wide install (requires root):
+            # sudo mv pcloud /usr/local/bin/
             ```
 
             ### Debian / Ubuntu — x86_64
@@ -379,9 +409,11 @@ jobs:
             ### macOS (Apple Silicon & Intel)
 
             ```bash
-            brew install macfuse openssl@3 sqlite
+            brew install macfuse openssl@3
             curl -L -o pcloud https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/pcloud-macos-universal
-            chmod +x pcloud && sudo mv pcloud /usr/local/bin/
+            chmod +x pcloud && mv pcloud ~/.local/bin/
+            # System-wide install (requires root):
+            # sudo mv pcloud /usr/local/bin/
             ```
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
