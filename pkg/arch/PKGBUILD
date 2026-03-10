@@ -1,6 +1,6 @@
 # Maintainer: pCloud <support@pcloud.com>
 pkgname=pcloud-cli
-pkgver=3.0.0-preview-02
+pkgver=3.0.0-preview-03
 pkgrel=1
 pkgdesc="pCloud console client — FUSE-based virtual drive with Crypto folder support"
 arch=('x86_64' 'aarch64' 'armv7h')
