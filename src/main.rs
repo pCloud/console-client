@@ -57,10 +57,18 @@ static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 /// Application entry point.
 ///
 /// Parses CLI arguments, validates them, and runs the appropriate mode:
+/// - Crash monitor: Internal subprocess for crash dump collection
 /// - Client mode: Connects to an existing daemon
 /// - Daemon mode: Runs as a background service
 /// - Foreground mode: Normal interactive operation
 fn main() -> ExitCode {
+    // Check if we were launched as a crash reporter subprocess.
+    // This must happen before crash_reporting::init() and CLI parsing.
+    if let Some((socket_name, dump_dir)) = console_client::crash_reporting::check_monitor_args() {
+        console_client::crash_reporting::run_monitor(&socket_name, &dump_dir);
+        return ExitCode::SUCCESS;
+    }
+
     // Initialize crash reporting before anything that could crash
     console_client::crash_reporting::init();
 
