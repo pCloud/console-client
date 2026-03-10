@@ -408,8 +408,14 @@ jobs:
 
             ### macOS (Apple Silicon & Intel)
 
+            > **Prerequisites** — install only what you don't already have:
+            >
+            > ```bash
+            > brew install --cask macfuse   # Required: provides FUSE support
+            > brew install openssl@3        # Required: provides TLS support
+            > ```
+
             ```bash
-            brew install macfuse openssl@3
             curl -L -o pcloud https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/pcloud-macos-universal
             chmod +x pcloud && mv pcloud ~/.local/bin/
             # System-wide install (requires root):
