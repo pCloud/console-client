@@ -1,21 +1,19 @@
 //! Command-line argument parsing for pCloud console client.
 //!
-//! This module provides CLI argument parsing using clap with derive macros,
-//! maintaining full compatibility with the original C++ implementation's flags.
+//! This module provides CLI argument parsing using clap with derive macros.
 //!
-//! # Original CLI Interface
+//! # CLI Interface
 //!
 //! ```text
-//! -u <username>    Username (required)
-//! -p               Prompt for password
+//! -t <token>       Authentication token
 //! -c               Prompt for crypto password
-//! -y               Use password as crypto password
 //! -d               Daemonize (background)
 //! -o               Commands mode (interactive)
 //! -m <path>        Mountpoint
 //! -k               Commands only (talk to existing daemon)
-//! -n               New user registration
-//! -s               Save password
+//! --logout         Clear saved credentials
+//! --unlink         Clear all local data
+//! --nosave         Don't save credentials
 //! ```
 
 use std::path::PathBuf;
@@ -32,7 +30,6 @@ use clap::Parser;
 ///
 /// If no credentials are provided, an interactive prompt will offer:
 /// - Web-based login (opens browser with QR code)
-/// - Manual username/password entry
 /// - Auth token entry
 #[derive(Parser, Debug, Clone, Default)]
 #[command(name = "pcloud")]
@@ -42,25 +39,11 @@ use clap::Parser;
     filesystem mount, with support for encrypted folders (Crypto) and \
     background daemon operation.\n\n\
     If no credentials are provided, an interactive authentication prompt \
-    will be displayed offering web-based login, manual credentials entry, \
-    or auth token input.")]
+    will be displayed offering web-based login or auth token input.")]
 pub struct Cli {
-    /// Username/email for pCloud account
-    ///
-    /// Required for password authentication (-p) and new user registration (-n).
-    /// Optional when using token auth (-t) or web login.
-    #[arg(short = 'u', long = "username")]
-    pub username: Option<String>,
-
-    /// Prompt for password (interactive)
-    ///
-    /// Requires -u/--username to be specified.
-    #[arg(short = 'p', long = "password")]
-    pub password_prompt: bool,
-
     /// Use authentication token directly
     ///
-    /// Bypasses username/password authentication.
+    /// Bypasses interactive authentication.
     /// The token can be obtained from pCloud account settings.
     #[arg(short = 't', long = "token")]
     pub auth_token: Option<String>,
@@ -68,10 +51,6 @@ pub struct Cli {
     /// Prompt for crypto password (interactive)
     #[arg(short = 'c', long = "crypto")]
     pub crypto_prompt: bool,
-
-    /// Use login password as crypto password
-    #[arg(short = 'y', long = "passascrypto")]
-    pub use_password_as_crypto: bool,
 
     /// Run as daemon (background process)
     #[arg(short = 'd', long = "daemon")]
@@ -91,22 +70,27 @@ pub struct Cli {
     #[arg(short = 'k', long = "client")]
     pub commands_only: bool,
 
-    /// Register new user account
-    #[arg(short = 'n', long = "newuser")]
-    pub newuser: bool,
-
-    /// Save credentials for automatic login
-    ///
-    /// This is the default behavior. Kept for backward compatibility.
-    #[arg(short = 's', long = "savepassword")]
-    pub save_password: bool,
-
     /// Do not save credentials between sessions
     ///
     /// By default, credentials are saved for automatic login on next run.
     /// Use this flag to prevent saving credentials.
     #[arg(long = "nosave")]
     pub nosave: bool,
+
+    /// Log out and clear saved credentials
+    ///
+    /// Removes saved auth token from the local database but keeps
+    /// any synced data intact. The client exits after logging out.
+    #[arg(long = "logout")]
+    pub logout: bool,
+
+    /// Unlink account and clear all local data
+    ///
+    /// Removes saved credentials AND all local sync data.
+    /// This is destructive and cannot be undone. The client exits
+    /// after unlinking.
+    #[arg(long = "unlink")]
+    pub unlink: bool,
 }
 
 impl Cli {
@@ -168,7 +152,6 @@ impl Cli {
     /// use console_client::cli::Cli;
     ///
     /// let cli = Cli {
-    ///     username: Some("test@example.com".to_string()),
     ///     daemonize: true,
     ///     commands_only: true,  // Conflict!
     ///     ..Default::default()
@@ -177,7 +160,6 @@ impl Cli {
     /// ```
     pub fn validate(&self) -> Result<(), String> {
         // Can't use both -d (daemon) and -k (client/commands_only)
-        // -d starts a new daemon, -k connects to existing daemon
         if self.daemonize && self.commands_only {
             return Err("Cannot use both --daemon and --client mode. \
                 Use --daemon to start a new background service, \
@@ -185,61 +167,46 @@ impl Cli {
                 .to_string());
         }
 
-        // Username must not be empty
-        if let Some(ref username) = self.username {
-            if username.trim().is_empty() {
-                return Err("--username value must not be empty. \
-                    Please provide a valid email address."
-                    .to_string());
+        // --logout and --unlink are mutually exclusive
+        if self.logout && self.unlink {
+            return Err("Cannot use both --logout and --unlink. \
+                Use --logout to clear credentials only, \
+                or --unlink to clear all local data."
+                .to_string());
+        }
+
+        // --logout and --unlink are standalone operations
+        if self.logout || self.unlink {
+            let flag = if self.logout { "--logout" } else { "--unlink" };
+
+            if self.daemonize {
+                return Err(format!(
+                    "{} cannot be combined with --daemon. \
+                    Run {} as a standalone operation.",
+                    flag, flag
+                ));
             }
-        }
-
-        // -p (password_prompt) requires -u (username)
-        if self.password_prompt && self.username.is_none() {
-            return Err("--password requires --username. \
-                Please provide a username with -u/--username."
-                .to_string());
-        }
-
-        // -n (newuser) requires -u (username) and -p (password)
-        if self.newuser && self.username.is_none() {
-            return Err("--newuser requires --username. \
-                Please provide a username with -u/--username."
-                .to_string());
-        }
-
-        // -y (use_password_as_crypto) requires -p (password_prompt)
-        // We need a password to use it as the crypto password
-        if self.use_password_as_crypto && !self.password_prompt {
-            return Err("--passascrypto requires --password. \
-                You must provide a password to use it as the crypto password."
-                .to_string());
-        }
-
-        // -c (crypto_prompt) and -y (use_password_as_crypto) are mutually exclusive
-        // Either prompt separately for crypto password OR use login password
-        if self.crypto_prompt && self.use_password_as_crypto {
-            return Err("Cannot use both --crypto and --passascrypto. \
-                Use --crypto to prompt for a separate crypto password, \
-                or --passascrypto to use the login password."
-                .to_string());
-        }
-
-        // -t (auth_token) conflicts with -p (password_prompt)
-        // Can't use both token and password authentication
-        if self.auth_token.is_some() && self.password_prompt {
-            return Err("Cannot use both --token and --password. \
-                Use --token for token authentication, \
-                or --password for username/password authentication."
-                .to_string());
-        }
-
-        // --nosave and -s (savepassword) are mutually exclusive
-        if self.nosave && self.save_password {
-            return Err("Cannot use both --nosave and --savepassword. \
-                Use --nosave to prevent saving credentials, \
-                or --savepassword to explicitly save them (default behavior)."
-                .to_string());
+            if self.commands_only {
+                return Err(format!(
+                    "{} cannot be combined with --client. \
+                    Run {} as a standalone operation.",
+                    flag, flag
+                ));
+            }
+            if self.auth_token.is_some() {
+                return Err(format!(
+                    "{} cannot be combined with --token. \
+                    Run {} as a standalone operation.",
+                    flag, flag
+                ));
+            }
+            if self.crypto_prompt {
+                return Err(format!(
+                    "{} cannot be combined with --crypto. \
+                    Run {} as a standalone operation.",
+                    flag, flag
+                ));
+            }
         }
 
         Ok(())
@@ -254,11 +221,8 @@ impl Cli {
     }
 
     /// Check if crypto functionality is requested.
-    ///
-    /// Returns true if either crypto password prompt or use-password-as-crypto
-    /// is enabled.
     pub fn wants_crypto(&self) -> bool {
-        self.crypto_prompt || self.use_password_as_crypto
+        self.crypto_prompt
     }
 
     /// Check if interactive mode is requested.
@@ -290,22 +254,6 @@ impl Cli {
         }
     }
 
-    /// Check if any authentication credentials are provided via CLI.
-    ///
-    /// Returns `true` if username+password, token, or other auth methods
-    /// are specified via command-line arguments.
-    pub fn has_cli_credentials(&self) -> bool {
-        self.password_prompt || self.auth_token.is_some()
-    }
-
-    /// Check if interactive authentication is needed.
-    ///
-    /// Returns `true` if no credentials are provided via CLI and
-    /// we need to prompt the user for authentication method.
-    pub fn needs_interactive_auth(&self) -> bool {
-        !self.has_cli_credentials() && !self.commands_only
-    }
-
     /// Check if credentials should be saved for future sessions.
     ///
     /// Returns `true` by default (save credentials). Returns `false` only
@@ -314,9 +262,14 @@ impl Cli {
         !self.nosave
     }
 
-    /// Get the username, if provided.
-    pub fn get_username(&self) -> Option<&str> {
-        self.username.as_deref()
+    /// Check if this is a logout operation.
+    pub fn is_logout(&self) -> bool {
+        self.logout
+    }
+
+    /// Check if this is an unlink operation.
+    pub fn is_unlink(&self) -> bool {
+        self.unlink
     }
 }
 
@@ -325,73 +278,55 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_basic_args() {
-        let cli = Cli::parse_from_args(["pcloud", "-u", "test@example.com"]);
-        assert_eq!(cli.username, Some("test@example.com".to_string()));
-        assert!(!cli.password_prompt);
-        assert!(!cli.daemonize);
-    }
-
-    #[test]
     fn test_parse_no_args() {
-        // Username is now optional
         let cli = Cli::parse_from_args(["pcloud"]);
-        assert!(cli.username.is_none());
-    }
-
-    #[test]
-    fn test_parse_all_flags() {
-        let cli = Cli::parse_from_args([
-            "pcloud",
-            "-u",
-            "test@example.com",
-            "-p",
-            "-c",
-            "-d",
-            "-o",
-            "-m",
-            "/mnt/pcloud",
-            "-n",
-            "-s",
-        ]);
-        assert_eq!(cli.username, Some("test@example.com".to_string()));
-        assert!(cli.password_prompt);
-        assert!(cli.crypto_prompt);
-        assert!(cli.daemonize);
-        assert!(cli.commands_mode);
-        assert_eq!(cli.mountpoint, Some(PathBuf::from("/mnt/pcloud")));
-        assert!(cli.newuser);
-        assert!(cli.save_password);
+        assert!(cli.auth_token.is_none());
+        assert!(!cli.daemonize);
     }
 
     #[test]
     fn test_parse_token_flag() {
         let cli = Cli::parse_from_args(["pcloud", "-t", "my-auth-token"]);
         assert_eq!(cli.auth_token, Some("my-auth-token".to_string()));
-        assert!(cli.username.is_none());
     }
 
     #[test]
     fn test_parse_long_flags() {
         let cli = Cli::parse_from_args([
             "pcloud",
-            "--username",
-            "user@test.com",
-            "--password",
+            "--token",
+            "my-token",
             "--daemon",
             "--mountpoint",
             "/home/user/cloud",
         ]);
-        assert_eq!(cli.username, Some("user@test.com".to_string()));
-        assert!(cli.password_prompt);
+        assert_eq!(cli.auth_token, Some("my-token".to_string()));
         assert!(cli.daemonize);
         assert_eq!(cli.mountpoint, Some(PathBuf::from("/home/user/cloud")));
     }
 
     #[test]
+    fn test_parse_all_flags() {
+        let cli = Cli::parse_from_args([
+            "pcloud",
+            "-t",
+            "token",
+            "-c",
+            "-d",
+            "-o",
+            "-m",
+            "/mnt/pcloud",
+        ]);
+        assert_eq!(cli.auth_token, Some("token".to_string()));
+        assert!(cli.crypto_prompt);
+        assert!(cli.daemonize);
+        assert!(cli.commands_mode);
+        assert_eq!(cli.mountpoint, Some(PathBuf::from("/mnt/pcloud")));
+    }
+
+    #[test]
     fn test_conflicting_daemon_and_client() {
         let cli = Cli {
-            username: Some("test@test.com".to_string()),
             daemonize: true,
             commands_only: true,
             ..Default::default()
@@ -402,77 +337,83 @@ mod tests {
     }
 
     #[test]
-    fn test_password_requires_username() {
+    fn test_logout_and_unlink_conflict() {
         let cli = Cli {
-            password_prompt: true,
+            logout: true,
+            unlink: true,
             ..Default::default()
         };
         let result = cli.validate();
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("username"));
+        assert!(result.unwrap_err().contains("--logout"));
     }
 
     #[test]
-    fn test_passascrypto_requires_password() {
+    fn test_logout_conflicts_with_daemon() {
         let cli = Cli {
-            username: Some("test@test.com".to_string()),
-            use_password_as_crypto: true,
-            password_prompt: false,
-            ..Default::default()
-        };
-        let result = cli.validate();
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("password"));
-    }
-
-    #[test]
-    fn test_passascrypto_with_password_valid() {
-        let cli = Cli {
-            username: Some("test@test.com".to_string()),
-            use_password_as_crypto: true,
-            password_prompt: true,
-            ..Default::default()
-        };
-        assert!(cli.validate().is_ok());
-    }
-
-    #[test]
-    fn test_crypto_and_passascrypto_conflict() {
-        let cli = Cli {
-            username: Some("test@test.com".to_string()),
-            crypto_prompt: true,
-            use_password_as_crypto: true,
-            password_prompt: true,
-            ..Default::default()
-        };
-        let result = cli.validate();
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("--crypto"));
-    }
-
-    #[test]
-    fn test_token_and_password_conflict() {
-        let cli = Cli {
-            username: Some("test@test.com".to_string()),
-            auth_token: Some("token".to_string()),
-            password_prompt: true,
-            ..Default::default()
-        };
-        let result = cli.validate();
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("--token"));
-    }
-
-    #[test]
-    fn test_valid_daemon_with_mountpoint() {
-        let cli = Cli {
-            username: Some("test@test.com".to_string()),
-            password_prompt: true,
+            logout: true,
             daemonize: true,
-            mountpoint: Some(PathBuf::from("/mnt/pcloud")),
+            ..Default::default()
+        };
+        let result = cli.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("--logout"));
+    }
+
+    #[test]
+    fn test_unlink_conflicts_with_client() {
+        let cli = Cli {
+            unlink: true,
+            commands_only: true,
+            ..Default::default()
+        };
+        let result = cli.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("--unlink"));
+    }
+
+    #[test]
+    fn test_logout_conflicts_with_token() {
+        let cli = Cli {
+            logout: true,
+            auth_token: Some("token".to_string()),
+            ..Default::default()
+        };
+        let result = cli.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("--logout"));
+    }
+
+    #[test]
+    fn test_unlink_conflicts_with_crypto() {
+        let cli = Cli {
+            unlink: true,
+            crypto_prompt: true,
+            ..Default::default()
+        };
+        let result = cli.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("--unlink"));
+    }
+
+    #[test]
+    fn test_logout_standalone_valid() {
+        let cli = Cli {
+            logout: true,
             ..Default::default()
         };
         assert!(cli.validate().is_ok());
+        assert!(cli.is_logout());
+    }
+
+    #[test]
+    fn test_unlink_standalone_valid() {
+        let cli = Cli {
+            unlink: true,
+            ..Default::default()
+        };
+        assert!(cli.validate().is_ok());
+        assert!(cli.is_unlink());
     }
 
     #[test]
@@ -492,16 +433,8 @@ mod tests {
         };
         assert!(cli1.wants_crypto());
 
-        let cli2 = Cli {
-            username: Some("test@test.com".to_string()),
-            use_password_as_crypto: true,
-            password_prompt: true,
-            ..Default::default()
-        };
-        assert!(cli2.wants_crypto());
-
-        let cli3 = Cli::default();
-        assert!(!cli3.wants_crypto());
+        let cli2 = Cli::default();
+        assert!(!cli2.wants_crypto());
     }
 
     #[test]
@@ -524,79 +457,16 @@ mod tests {
     #[test]
     fn test_default_values() {
         let cli = Cli::default();
-        assert!(cli.username.is_none());
-        assert!(!cli.password_prompt);
         assert!(cli.auth_token.is_none());
         assert!(!cli.crypto_prompt);
-        assert!(!cli.use_password_as_crypto);
         assert!(!cli.daemonize);
         assert!(!cli.commands_mode);
         assert!(cli.mountpoint.is_none());
         assert!(!cli.commands_only);
-        assert!(!cli.newuser);
-        assert!(!cli.save_password);
         assert!(!cli.nosave);
+        assert!(!cli.logout);
+        assert!(!cli.unlink);
         assert!(cli.should_save_credentials());
-    }
-
-    #[test]
-    fn test_has_cli_credentials() {
-        let cli1 = Cli {
-            password_prompt: true,
-            username: Some("test".to_string()),
-            ..Default::default()
-        };
-        assert!(cli1.has_cli_credentials());
-
-        let cli2 = Cli {
-            auth_token: Some("token".to_string()),
-            ..Default::default()
-        };
-        assert!(cli2.has_cli_credentials());
-
-        let cli3 = Cli::default();
-        assert!(!cli3.has_cli_credentials());
-    }
-
-    #[test]
-    fn test_needs_interactive_auth() {
-        // No credentials = needs interactive
-        let cli1 = Cli::default();
-        assert!(cli1.needs_interactive_auth());
-
-        // Has password = doesn't need interactive
-        let cli2 = Cli {
-            password_prompt: true,
-            username: Some("test".to_string()),
-            ..Default::default()
-        };
-        assert!(!cli2.needs_interactive_auth());
-
-        // Has token = doesn't need interactive
-        let cli3 = Cli {
-            auth_token: Some("token".to_string()),
-            ..Default::default()
-        };
-        assert!(!cli3.needs_interactive_auth());
-
-        // Client mode = doesn't need interactive
-        let cli4 = Cli {
-            commands_only: true,
-            ..Default::default()
-        };
-        assert!(!cli4.needs_interactive_auth());
-    }
-
-    #[test]
-    fn test_get_username() {
-        let cli1 = Cli {
-            username: Some("test@example.com".to_string()),
-            ..Default::default()
-        };
-        assert_eq!(cli1.get_username(), Some("test@example.com"));
-
-        let cli2 = Cli::default();
-        assert_eq!(cli2.get_username(), None);
     }
 
     #[test]
@@ -615,21 +485,33 @@ mod tests {
     }
 
     #[test]
-    fn test_nosave_and_savepassword_conflict() {
-        let cli = Cli {
-            nosave: true,
-            save_password: true,
-            ..Default::default()
-        };
-        let result = cli.validate();
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("--nosave"));
-    }
-
-    #[test]
     fn test_parse_nosave_flag() {
         let cli = Cli::parse_from_args(["pcloud", "--nosave"]);
         assert!(cli.nosave);
         assert!(!cli.should_save_credentials());
+    }
+
+    #[test]
+    fn test_parse_logout_flag() {
+        let cli = Cli::parse_from_args(["pcloud", "--logout"]);
+        assert!(cli.logout);
+        assert!(cli.is_logout());
+    }
+
+    #[test]
+    fn test_parse_unlink_flag() {
+        let cli = Cli::parse_from_args(["pcloud", "--unlink"]);
+        assert!(cli.unlink);
+        assert!(cli.is_unlink());
+    }
+
+    #[test]
+    fn test_valid_daemon_with_mountpoint() {
+        let cli = Cli {
+            daemonize: true,
+            mountpoint: Some(PathBuf::from("/mnt/pcloud")),
+            ..Default::default()
+        };
+        assert!(cli.validate().is_ok());
     }
 }

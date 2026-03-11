@@ -10,7 +10,6 @@
 //!
 //! match prompt_auth_choice()? {
 //!     AuthChoice::WebLogin => handle_web_login(),
-//!     AuthChoice::EnterCredentials => handle_manual_login(),
 //!     AuthChoice::EnterToken => handle_token_login(),
 //!     AuthChoice::ShowCliHelp => print_cli_auth_help(),
 //!     AuthChoice::Cancel => return Ok(()),
@@ -30,8 +29,6 @@ use crate::Result;
 pub enum AuthChoice {
     /// Web-based login (opens browser)
     WebLogin,
-    /// Enter username and password manually
-    EnterCredentials,
     /// Enter authentication token directly
     EnterToken,
     /// Show CLI parameter help
@@ -64,9 +61,8 @@ pub fn prompt_auth_choice() -> Result<AuthChoice> {
     println!("How would you like to authenticate?");
     println!();
     println!("  [1] Web-based login (opens browser)");
-    println!("  [2] Enter username and password");
-    println!("  [3] Enter authentication token");
-    println!("  [4] Show CLI parameters for scripted auth");
+    println!("  [2] Enter authentication token");
+    println!("  [3] Show CLI parameters for scripted auth");
     println!("  [q] Cancel");
     println!();
 
@@ -89,12 +85,11 @@ pub fn prompt_auth_choice() -> Result<AuthChoice> {
 
         match input {
             "1" => return Ok(AuthChoice::WebLogin),
-            "2" => return Ok(AuthChoice::EnterCredentials),
-            "3" => return Ok(AuthChoice::EnterToken),
-            "4" => return Ok(AuthChoice::ShowCliHelp),
+            "2" => return Ok(AuthChoice::EnterToken),
+            "3" => return Ok(AuthChoice::ShowCliHelp),
             "q" | "Q" | "quit" | "exit" | "cancel" => return Ok(AuthChoice::Cancel),
             _ => {
-                println!("Invalid choice. Please enter 1, 2, 3, 4, or q.");
+                println!("Invalid choice. Please enter 1, 2, 3, or q.");
             }
         }
     }
@@ -109,72 +104,26 @@ pub fn print_cli_auth_help() {
     println!("CLI Authentication Options");
     println!("==========================");
     println!();
-    println!("Password authentication:");
-    println!("  pcloud -u your@email.com -p");
-    println!();
     println!("Token authentication:");
     println!("  pcloud -t YOUR_AUTH_TOKEN");
     println!();
     println!("Custom mount path:");
     println!("  pcloud -m /path/to/mount");
     println!();
-    println!("Save credentials for future use:");
-    println!("  pcloud -u your@email.com -p -s");
+    println!("Don't save credentials:");
+    println!("  pcloud --nosave");
     println!();
     println!("Run as daemon:");
     println!("  pcloud -d");
     println!();
+    println!("Log out (clear saved credentials):");
+    println!("  pcloud --logout");
+    println!();
+    println!("Unlink account (clear all local data):");
+    println!("  pcloud --unlink");
+    println!();
     println!("Default mount path: ~/pCloud");
     println!();
-}
-
-/// Prompt for username/email.
-///
-/// # Returns
-///
-/// The entered username, or an error if reading fails.
-pub fn prompt_username() -> Result<String> {
-    print!("Email: ");
-    io::stdout().flush().map_err(PCloudError::Io)?;
-
-    let mut username = String::new();
-    io::stdin()
-        .lock()
-        .read_line(&mut username)
-        .map_err(PCloudError::Io)?;
-
-    let username = username.trim().to_string();
-
-    if username.is_empty() {
-        return Err(PCloudError::InvalidArgument(
-            "Email cannot be empty".to_string(),
-        ));
-    }
-
-    Ok(username)
-}
-
-/// Prompt for username and password.
-///
-/// # Returns
-///
-/// A tuple of (username, password) on success.
-///
-/// # Example
-///
-/// ```ignore
-/// use console_client::cli::auth_prompt::prompt_credentials;
-///
-/// let (username, password) = prompt_credentials()?;
-/// client.authenticate(&username, &password, save)?;
-/// ```
-pub fn prompt_credentials() -> Result<(String, SecretString)> {
-    println!();
-
-    let username = prompt_username()?;
-    let password = prompt_for_password("Password: ").map_err(PCloudError::Io)?;
-
-    Ok((username, password))
 }
 
 /// Prompt for authentication token.
@@ -232,7 +181,7 @@ mod tests {
 
     #[test]
     fn test_auth_choice_copy() {
-        let choice = AuthChoice::EnterCredentials;
+        let choice = AuthChoice::EnterToken;
         let copy = choice;
         assert_eq!(choice, copy);
     }

@@ -161,8 +161,7 @@ mod tests {
 
         // Test Cli default
         let cli = Cli::default();
-        assert!(cli.username.is_none());
-        assert!(!cli.password_prompt);
+        assert!(cli.auth_token.is_none());
         assert!(!cli.daemonize);
 
         // Test InteractiveCommand parsing
@@ -180,8 +179,6 @@ mod tests {
 
         // Valid configuration
         let valid_cli = Cli {
-            username: Some("test@example.com".to_string()),
-            password_prompt: true,
             daemonize: true,
             ..Default::default()
         };
@@ -189,18 +186,16 @@ mod tests {
 
         // Invalid: daemon and client mode together
         let invalid_cli = Cli {
-            username: Some("test@example.com".to_string()),
             daemonize: true,
             commands_only: true,
             ..Default::default()
         };
         assert!(invalid_cli.validate().is_err());
 
-        // Invalid: passascrypto without password
+        // Invalid: logout and unlink together
         let invalid_cli2 = Cli {
-            username: Some("test@example.com".to_string()),
-            use_password_as_crypto: true,
-            password_prompt: false,
+            logout: true,
+            unlink: true,
             ..Default::default()
         };
         assert!(invalid_cli2.validate().is_err());

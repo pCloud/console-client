@@ -109,6 +109,18 @@ pub enum DaemonCommand {
     ///
     /// Returns `Pong` if the daemon is responding.
     Ping,
+
+    /// Log out and clear saved credentials. Keeps local sync data.
+    ///
+    /// After logout, the daemon shuts down since it cannot operate
+    /// without authentication.
+    Logout,
+
+    /// Unlink account and clear all local data. This is destructive.
+    ///
+    /// After unlinking, the daemon shuts down since the account
+    /// is fully disconnected and all local data has been removed.
+    Unlink,
 }
 
 /// Custom Debug implementation that redacts password values.
@@ -131,6 +143,8 @@ impl std::fmt::Debug for DaemonCommand {
             DaemonCommand::Quit => write!(f, "Quit"),
             DaemonCommand::Status => write!(f, "Status"),
             DaemonCommand::Ping => write!(f, "Ping"),
+            DaemonCommand::Logout => write!(f, "Logout"),
+            DaemonCommand::Unlink => write!(f, "Unlink"),
         }
     }
 }
@@ -144,6 +158,8 @@ impl std::fmt::Display for DaemonCommand {
             DaemonCommand::Quit => write!(f, "Quit"),
             DaemonCommand::Status => write!(f, "Status"),
             DaemonCommand::Ping => write!(f, "Ping"),
+            DaemonCommand::Logout => write!(f, "Logout"),
+            DaemonCommand::Unlink => write!(f, "Unlink"),
         }
     }
 }
@@ -517,6 +533,31 @@ fn process_command(
             crate::daemon::signals::request_shutdown();
             DaemonResponse::OkWithMessage("Quit requested - daemon shutting down".to_string())
         }
+
+        DaemonCommand::Logout => match client.lock() {
+            Ok(mut c) => {
+                c.logout();
+                // Request shutdown since we can't operate without auth
+                crate::daemon::signals::request_shutdown();
+                DaemonResponse::OkWithMessage(
+                    "Logged out and credentials cleared. Daemon shutting down.".to_string(),
+                )
+            }
+            Err(e) => DaemonResponse::Error(format!("Failed to acquire client lock: {}", e)),
+        },
+
+        DaemonCommand::Unlink => match client.lock() {
+            Ok(mut c) => {
+                c.unlink();
+                // Request shutdown since we can't operate without auth and data is cleared
+                crate::daemon::signals::request_shutdown();
+                DaemonResponse::OkWithMessage(
+                    "Account unlinked and all local data cleared. Daemon shutting down."
+                        .to_string(),
+                )
+            }
+            Err(e) => DaemonResponse::Error(format!("Failed to acquire client lock: {}", e)),
+        },
     }
 }
 
@@ -705,6 +746,8 @@ mod tests {
             ),
             "StartCrypto"
         );
+        assert_eq!(format!("{}", DaemonCommand::Logout), "Logout");
+        assert_eq!(format!("{}", DaemonCommand::Unlink), "Unlink");
     }
 
     #[test]
@@ -767,6 +810,8 @@ mod tests {
                 password: Some("test".to_string()),
             },
             DaemonCommand::StartCrypto { password: None },
+            DaemonCommand::Logout,
+            DaemonCommand::Unlink,
         ];
 
         for cmd in commands {
@@ -787,6 +832,8 @@ mod tests {
                 ) => {
                     assert_eq!(p1, p2);
                 }
+                (DaemonCommand::Logout, DaemonCommand::Logout) => {}
+                (DaemonCommand::Unlink, DaemonCommand::Unlink) => {}
                 _ => panic!("Mismatch after round-trip"),
             }
         }

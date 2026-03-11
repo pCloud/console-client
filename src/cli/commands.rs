@@ -11,6 +11,8 @@
 //! - `finalize` - Finish sync and exit cleanly
 //! - `status` / `s` - Show current status
 //! - `quit` / `q` / `exit` - Exit the client
+//! - `logout` / `lo` - Log out and clear saved credentials
+//! - `unlink` / `ul` - Unlink account and clear all local data
 //! - `help` / `h` / `?` - Show help
 
 use std::fmt;
@@ -50,6 +52,18 @@ pub enum InteractiveCommand {
     ///
     /// Exits the client without waiting for sync to complete.
     Quit,
+
+    /// Log out and clear saved credentials.
+    ///
+    /// Clears the saved auth token but keeps local sync data.
+    /// The client exits after logging out.
+    Logout,
+
+    /// Unlink account and clear all local data.
+    ///
+    /// Clears credentials AND all local sync data. This is destructive.
+    /// The client exits after unlinking.
+    Unlink,
 
     /// Show help text.
     ///
@@ -97,6 +111,8 @@ impl InteractiveCommand {
             "finalize" | "fin" | "finish" => Self::Finalize,
             "status" | "s" | "stat" => Self::Status,
             "quit" | "q" | "exit" | "bye" => Self::Quit,
+            "logout" | "lo" => Self::Logout,
+            "unlink" | "ul" => Self::Unlink,
             "help" | "h" | "?" => Self::Help,
             "" => Self::Unknown(String::new()),
             other => Self::Unknown(other.to_string()),
@@ -105,7 +121,10 @@ impl InteractiveCommand {
 
     /// Check if the command should cause the client to exit.
     pub fn is_exit_command(&self) -> bool {
-        matches!(self, Self::Quit | Self::Finalize)
+        matches!(
+            self,
+            Self::Quit | Self::Finalize | Self::Logout | Self::Unlink
+        )
     }
 
     /// Check if the command is a crypto-related operation.
@@ -121,6 +140,8 @@ impl InteractiveCommand {
             Self::Finalize => "Finish sync and exit cleanly",
             Self::Status => "Show current status",
             Self::Quit => "Exit the client immediately",
+            Self::Logout => "Log out and clear saved credentials",
+            Self::Unlink => "Unlink account and clear all local data",
             Self::Help => "Show available commands",
             Self::Unknown(_) => "Unknown command",
         }
@@ -138,6 +159,8 @@ impl InteractiveCommand {
         println!("  finalize, fin       - Finish sync and exit cleanly");
         println!("  status, s           - Show current status");
         println!("  quit, q, exit       - Exit the client");
+        println!("  logout, lo          - Log out and clear saved credentials");
+        println!("  unlink, ul          - Unlink account and clear all local data");
         println!("  help, h, ?          - Show this help");
         println!();
     }
@@ -156,6 +179,14 @@ impl InteractiveCommand {
         )?;
         writeln!(writer, "  status, s           - Show current status")?;
         writeln!(writer, "  quit, q, exit       - Exit the client")?;
+        writeln!(
+            writer,
+            "  logout, lo          - Log out and clear saved credentials"
+        )?;
+        writeln!(
+            writer,
+            "  unlink, ul          - Unlink account and clear all local data"
+        )?;
         writeln!(writer, "  help, h, ?          - Show this help")?;
         writeln!(writer)?;
         Ok(())
@@ -170,6 +201,8 @@ impl fmt::Display for InteractiveCommand {
             Self::Finalize => write!(f, "finalize"),
             Self::Status => write!(f, "status"),
             Self::Quit => write!(f, "quit"),
+            Self::Logout => write!(f, "logout"),
+            Self::Unlink => write!(f, "unlink"),
             Self::Help => write!(f, "help"),
             Self::Unknown(s) => write!(f, "unknown({})", s),
         }
@@ -339,9 +372,37 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_logout() {
+        assert_eq!(
+            InteractiveCommand::parse("logout"),
+            InteractiveCommand::Logout
+        );
+        assert_eq!(InteractiveCommand::parse("lo"), InteractiveCommand::Logout);
+        assert_eq!(
+            InteractiveCommand::parse("LOGOUT"),
+            InteractiveCommand::Logout
+        );
+    }
+
+    #[test]
+    fn test_parse_unlink() {
+        assert_eq!(
+            InteractiveCommand::parse("unlink"),
+            InteractiveCommand::Unlink
+        );
+        assert_eq!(InteractiveCommand::parse("ul"), InteractiveCommand::Unlink);
+        assert_eq!(
+            InteractiveCommand::parse("UNLINK"),
+            InteractiveCommand::Unlink
+        );
+    }
+
+    #[test]
     fn test_is_exit_command() {
         assert!(InteractiveCommand::Quit.is_exit_command());
         assert!(InteractiveCommand::Finalize.is_exit_command());
+        assert!(InteractiveCommand::Logout.is_exit_command());
+        assert!(InteractiveCommand::Unlink.is_exit_command());
         assert!(!InteractiveCommand::Status.is_exit_command());
         assert!(!InteractiveCommand::StartCrypto.is_exit_command());
     }
@@ -387,6 +448,8 @@ mod tests {
         assert!(output.contains("finalize"));
         assert!(output.contains("status"));
         assert!(output.contains("quit"));
+        assert!(output.contains("logout"));
+        assert!(output.contains("unlink"));
         assert!(output.contains("help"));
     }
 

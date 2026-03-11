@@ -6,11 +6,11 @@
 //!
 //! # Features
 //!
-//! - **Authentication**: Login/logout, token management, new user registration
+//! - **Authentication**: Web login, token auth, logout, unlink
 //! - **Crypto Folders**: Encrypted storage with setup/start/stop operations
 //! - **FUSE Mounting**: Virtual filesystem at specified mountpoint
 //! - **Daemon Mode**: Background service with IPC command interface
-//! - **CLI Commands**: startcrypto, stopcrypto, finalize, quit
+//! - **CLI Commands**: startcrypto, stopcrypto, finalize, quit, logout, unlink
 //!
 //! # Usage
 //!
@@ -18,16 +18,15 @@
 //! pcloud [OPTIONS]
 //!
 //! Options:
-//!   -u <username>    Username (required)
-//!   -p               Prompt for password
+//!   -t <token>       Authentication token
 //!   -c               Prompt for crypto password
-//!   -y               Use password as crypto password
 //!   -d               Daemonize (background)
 //!   -o               Commands mode
 //!   -m <path>        Mountpoint
 //!   -k               Commands only (talk to daemon)
-//!   -n               New user registration
-//!   -s               Save password
+//!   --logout         Clear saved credentials
+//!   --unlink         Clear all local data
+//!   --nosave         Don't save credentials
 //! ```
 
 use std::process::ExitCode;
@@ -39,7 +38,7 @@ use clap::Parser;
 use secrecy::{ExposeSecret, SecretString};
 
 use console_client::cli::{
-    print_cli_auth_help, prompt_auth_choice, prompt_credentials, prompt_token, AuthChoice, Cli,
+    print_cli_auth_help, prompt_auth_choice, prompt_confirm, prompt_token, AuthChoice, Cli,
     CommandPrompt, InteractiveCommand,
 };
 use console_client::error::{AuthError, PCloudError};
@@ -58,6 +57,7 @@ static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 ///
 /// Parses CLI arguments, validates them, and runs the appropriate mode:
 /// - Crash monitor: Internal subprocess for crash dump collection
+/// - Logout/Unlink: Clear credentials or data and exit
 /// - Client mode: Connects to an existing daemon
 /// - Daemon mode: Runs as a background service
 /// - Foreground mode: Normal interactive operation
@@ -95,16 +95,26 @@ fn main() -> ExitCode {
 /// Main application runner.
 ///
 /// Dispatches to the appropriate mode based on CLI arguments:
+/// - `--logout`: Clear saved credentials and exit
+/// - `--unlink`: Clear all local data and exit
 /// - `--client`: Client mode (talk to existing daemon)
 /// - `--daemon`: Daemon mode (background service)
 /// - Default: Foreground mode (interactive)
 fn run(cli: Cli) -> Result<()> {
-    // Handle client mode (talk to daemon) - Phase 9
+    // Handle logout/unlink operations first
+    if cli.is_logout() {
+        return run_logout();
+    }
+    if cli.is_unlink() {
+        return run_unlink();
+    }
+
+    // Handle client mode (talk to daemon)
     if cli.commands_only {
         return run_client_mode(&cli);
     }
 
-    // Handle daemon mode - Phase 8
+    // Handle daemon mode
     if cli.daemonize {
         return run_daemon_mode(cli);
     }
@@ -117,8 +127,6 @@ fn run(cli: Cli) -> Result<()> {
 enum AuthMethod {
     /// Use saved auth token from database
     SavedToken,
-    /// Use password authentication with provided username and password
-    Password(String, SecretString),
     /// Use provided auth token
     Token(SecretString),
     /// Need to prompt user for authentication method
@@ -130,18 +138,6 @@ fn determine_auth_method(cli: &Cli, client: &Arc<Mutex<PCloudClient>>) -> Result
     // Check if token was provided via CLI
     if let Some(ref token) = cli.auth_token {
         return Ok(AuthMethod::Token(SecretString::from(token.clone())));
-    }
-
-    // Check if password prompt was requested
-    if cli.password_prompt {
-        let username = cli.username.as_ref().ok_or_else(|| {
-            PCloudError::InvalidArgument(
-                "Username required for password authentication".to_string(),
-            )
-        })?;
-        print_status(StatusIndicator::Info, "Password required");
-        let password = prompt_for_password("Password: ").map_err(PCloudError::Io)?;
-        return Ok(AuthMethod::Password(username.clone(), password));
     }
 
     // Check if we have saved credentials
@@ -159,16 +155,66 @@ fn determine_auth_method(cli: &Cli, client: &Arc<Mutex<PCloudClient>>) -> Result
     Ok(AuthMethod::NeedsInteractive)
 }
 
+/// Run the --logout operation.
+///
+/// Initializes the client, clears saved credentials, and exits.
+fn run_logout() -> Result<()> {
+    print_status(StatusIndicator::Info, "Initializing pCloud client...");
+    let client = PCloudClient::init()?;
+
+    let mut client_guard = client
+        .lock()
+        .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
+
+    if !client_guard.has_saved_credentials() {
+        print_status(StatusIndicator::Info, "No saved credentials found.");
+        return Ok(());
+    }
+
+    client_guard.logout();
+    print_status(
+        StatusIndicator::Success,
+        "Logged out. Saved credentials have been cleared.",
+    );
+    Ok(())
+}
+
+/// Run the --unlink operation.
+///
+/// Initializes the client, asks for confirmation, then clears all local data.
+fn run_unlink() -> Result<()> {
+    print_status(StatusIndicator::Info, "Initializing pCloud client...");
+    let client = PCloudClient::init()?;
+
+    // Ask for confirmation since this is destructive
+    let confirmed =
+        prompt_confirm("This will remove all saved credentials and local sync data. Continue?")?;
+    if !confirmed {
+        print_status(StatusIndicator::Info, "Unlink cancelled.");
+        return Ok(());
+    }
+
+    let mut client_guard = client
+        .lock()
+        .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
+
+    client_guard.unlink();
+    print_status(
+        StatusIndicator::Success,
+        "Account unlinked. All local data has been cleared.",
+    );
+    Ok(())
+}
+
 /// Run the client in foreground mode.
 ///
 /// This is the main operational mode where the client:
 /// 1. Initializes the pCloud client
 /// 2. Sets up status callbacks
 /// 3. Handles authentication (with interactive prompt if needed)
-/// 4. Optionally handles registration for new users
-/// 5. Optionally sets up and/or starts crypto
-/// 6. Mounts the filesystem (defaults to ~/pCloud)
-/// 7. Enters the command loop or waits for signals
+/// 4. Optionally sets up and/or starts crypto
+/// 5. Mounts the filesystem (defaults to ~/pCloud)
+/// 6. Enters the command loop or waits for signals
 fn run_foreground_mode(cli: Cli) -> Result<()> {
     // Set up signal handler for Ctrl+C
     setup_signal_handler()?;
@@ -194,31 +240,10 @@ fn run_foreground_mode(cli: Cli) -> Result<()> {
         }
     });
 
-    // 3. Handle new user registration (requires username and password)
-    if cli.newuser {
-        let username = cli.username.as_ref().ok_or_else(|| {
-            PCloudError::InvalidArgument("Username required for new user registration".to_string())
-        })?;
-        print_status(StatusIndicator::Info, "Password required for registration");
-        let password = prompt_for_password("Password: ").map_err(PCloudError::Io)?;
-        return handle_registration(username, Arc::clone(&client), Some(password));
-    }
-
-    // 4. Determine and handle authentication
-    let password = match determine_auth_method(&cli, &client)? {
+    // 3. Determine and handle authentication
+    match determine_auth_method(&cli, &client)? {
         AuthMethod::SavedToken => {
             print_status(StatusIndicator::Info, "Using saved credentials");
-            None
-        }
-        AuthMethod::Password(username, pwd) => {
-            print_status(StatusIndicator::Info, "Authenticating...");
-            let mut client_guard = client
-                .lock()
-                .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
-            client_guard.authenticate(&username, &pwd, cli.should_save_credentials())?;
-            drop(client_guard);
-            print_status(StatusIndicator::Success, "Authentication credentials set");
-            Some(pwd)
         }
         AuthMethod::Token(token) => {
             print_status(StatusIndicator::Info, "Setting authentication token...");
@@ -228,15 +253,14 @@ fn run_foreground_mode(cli: Cli) -> Result<()> {
             client_guard.set_auth_token(&token, cli.should_save_credentials())?;
             drop(client_guard);
             print_status(StatusIndicator::Success, "Authentication token set");
-            None
         }
         AuthMethod::NeedsInteractive => {
             // No credentials - prompt user for authentication method
-            handle_interactive_auth(&client, cli.should_save_credentials())?
+            handle_interactive_auth(&client, cli.should_save_credentials())?;
         }
     };
 
-    // 5. Prepare mountpoint before starting sync (psync_start_sync mounts the FS)
+    // 4. Prepare mountpoint before starting sync (psync_start_sync mounts the FS)
     let mountpoint = cli.get_mountpoint();
     {
         let mut client_guard = client
@@ -260,9 +284,10 @@ fn run_foreground_mode(cli: Cli) -> Result<()> {
         );
     }
 
-    // 6. Handle crypto setup/start if requested
-    let crypto_password = get_crypto_password(&cli, password.as_ref())?;
-    if let Some(ref crypto_pwd) = crypto_password {
+    // 5. Handle crypto setup/start if requested
+    if cli.crypto_prompt {
+        print_step("Crypto password required");
+        let crypto_pwd = prompt_for_password("Crypto password: ").map_err(PCloudError::Io)?;
         let secure_crypto_pwd = SecurePassword::from_secret(crypto_pwd.clone());
         let crypto_secret = SecretString::from(secure_crypto_pwd.expose().to_string());
 
@@ -270,29 +295,26 @@ fn run_foreground_mode(cli: Cli) -> Result<()> {
             .lock()
             .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
 
-        if cli.crypto_prompt || cli.use_password_as_crypto {
-            // Check if crypto is set up
-            if !client_guard.is_crypto_setup() {
-                print_status(
-                    StatusIndicator::Info,
-                    "Setting up crypto for the first time...",
-                );
-                // First time - set up crypto with empty hint
-                client_guard.setup_crypto(&crypto_secret, "")?;
-                print_status(StatusIndicator::Success, "Crypto setup complete");
-            }
-
-            // Start crypto
-            print_status(StatusIndicator::Info, "Starting crypto...");
-            client_guard.start_crypto(&crypto_secret)?;
+        // Check if crypto is set up
+        if !client_guard.is_crypto_setup() {
             print_status(
-                StatusIndicator::Success,
-                "Crypto started - encrypted folders accessible",
+                StatusIndicator::Info,
+                "Setting up crypto for the first time...",
             );
+            client_guard.setup_crypto(&crypto_secret, "")?;
+            print_status(StatusIndicator::Success, "Crypto setup complete");
         }
+
+        // Start crypto
+        print_status(StatusIndicator::Info, "Starting crypto...");
+        client_guard.start_crypto(&crypto_secret)?;
+        print_status(
+            StatusIndicator::Success,
+            "Crypto started - encrypted folders accessible",
+        );
     }
 
-    // 7. Start sync (this also mounts the FUSE filesystem at the configured fsroot)
+    // 6. Start sync (this also mounts the FUSE filesystem at the configured fsroot)
     {
         let mut client_guard = client
             .lock()
@@ -308,7 +330,7 @@ fn run_foreground_mode(cli: Cli) -> Result<()> {
         );
     }
 
-    // 8. Enter command loop if interactive mode, otherwise wait for signals
+    // 7. Enter command loop if interactive mode, otherwise wait for signals
     if cli.commands_mode {
         println!("\nEntering interactive mode. Type 'help' for available commands.");
         run_command_loop(Arc::clone(&client))?;
@@ -328,23 +350,12 @@ fn run_foreground_mode(cli: Cli) -> Result<()> {
 fn handle_interactive_auth(
     client: &Arc<Mutex<PCloudClient>>,
     save_credentials: bool,
-) -> Result<Option<SecretString>> {
+) -> Result<()> {
     loop {
         match prompt_auth_choice()? {
             AuthChoice::WebLogin => {
                 handle_web_login(client, save_credentials)?;
-                return Ok(None);
-            }
-            AuthChoice::EnterCredentials => {
-                let (username, password) = prompt_credentials()?;
-                print_status(StatusIndicator::Info, "Authenticating...");
-                let mut client_guard = client.lock().map_err(|_| {
-                    PCloudError::Config("Failed to acquire client lock".to_string())
-                })?;
-                client_guard.authenticate(&username, &password, save_credentials)?;
-                drop(client_guard);
-                print_status(StatusIndicator::Success, "Authentication successful!");
-                return Ok(Some(password));
+                return Ok(());
             }
             AuthChoice::EnterToken => {
                 let token = prompt_token()?;
@@ -355,7 +366,7 @@ fn handle_interactive_auth(
                 client_guard.set_auth_token(&token, save_credentials)?;
                 drop(client_guard);
                 print_status(StatusIndicator::Success, "Authentication successful!");
-                return Ok(None);
+                return Ok(());
             }
             AuthChoice::ShowCliHelp => {
                 print_cli_auth_help();
@@ -442,26 +453,6 @@ fn handle_web_login(client: &Arc<Mutex<PCloudClient>>, save_credentials: bool) -
     Ok(())
 }
 
-/// Get the crypto password based on CLI arguments.
-///
-/// Returns:
-/// - The login password if `--passascrypto` is set
-/// - A prompted password if `--crypto` is set
-/// - None otherwise
-fn get_crypto_password(cli: &Cli, password: Option<&SecretString>) -> Result<Option<SecretString>> {
-    if cli.use_password_as_crypto {
-        // Use login password as crypto password
-        Ok(password.cloned())
-    } else if cli.crypto_prompt {
-        // Prompt for separate crypto password
-        print_step("Crypto password required");
-        let pwd = prompt_for_password("Crypto password: ").map_err(PCloudError::Io)?;
-        Ok(Some(pwd))
-    } else {
-        Ok(None)
-    }
-}
-
 /// Run the interactive command loop.
 ///
 /// Reads commands from stdin and executes them until the user
@@ -512,6 +503,35 @@ fn run_command_loop(client: Arc<Mutex<PCloudClient>>) -> Result<()> {
                 if let Err(e) = handle_status_command(&client) {
                     eprintln!("Error getting status: {}", e);
                 }
+            }
+            InteractiveCommand::Logout => {
+                match client.lock() {
+                    Ok(mut c) => {
+                        c.logout();
+                        println!("Logged out. Saved credentials cleared.");
+                    }
+                    Err(e) => eprintln!("Error: {}", e),
+                }
+                break;
+            }
+            InteractiveCommand::Unlink => {
+                match prompt_confirm(
+                    "This will remove all saved credentials and local sync data. Continue?",
+                ) {
+                    Ok(true) => match client.lock() {
+                        Ok(mut c) => {
+                            c.unlink();
+                            println!("Account unlinked. All local data cleared.");
+                        }
+                        Err(e) => eprintln!("Error: {}", e),
+                    },
+                    Ok(false) => {
+                        println!("Unlink cancelled.");
+                        continue;
+                    }
+                    Err(e) => eprintln!("Error: {}", e),
+                }
+                break;
             }
             InteractiveCommand::Quit => {
                 println!("Exiting...");
@@ -602,47 +622,6 @@ fn print_client_status(client: &PCloudClient) {
     println!("----------------------------\n");
 }
 
-/// Handle new user registration.
-fn handle_registration(
-    username: &str,
-    client: Arc<Mutex<PCloudClient>>,
-    password: Option<SecretString>,
-) -> Result<()> {
-    let pwd = password.ok_or_else(|| {
-        PCloudError::Auth(AuthError::Other(
-            "Password is required for registration. Use -p flag.".to_string(),
-        ))
-    })?;
-
-    // Confirm password for new registration
-    print_status(StatusIndicator::Info, "Please confirm your password");
-    let confirm = prompt_for_password("Confirm password: ").map_err(PCloudError::Io)?;
-
-    if pwd.expose_secret() != confirm.expose_secret() {
-        return Err(PCloudError::Auth(AuthError::Other(
-            "Passwords do not match".to_string(),
-        )));
-    }
-
-    print_status(StatusIndicator::Info, "Registering new account...");
-
-    let mut client_guard = client
-        .lock()
-        .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
-
-    client_guard.register(username, &pwd, true)?;
-
-    println!();
-    print_status(StatusIndicator::Success, "Registration successful!");
-    println!(
-        "Please check your email ({}) to verify your account.",
-        username
-    );
-    println!("After verification, run pcloud again without the -n flag to login.");
-
-    Ok(())
-}
-
 /// Set up signal handler for graceful shutdown.
 fn setup_signal_handler() -> Result<()> {
     ctrlc::set_handler(move || {
@@ -670,7 +649,7 @@ fn print_step(msg: &str) {
 }
 
 // ============================================================================
-// Daemon mode implementation (Phase 8)
+// Daemon mode implementation
 // ============================================================================
 
 /// Run as a daemon (background service).
@@ -722,7 +701,7 @@ fn run_daemon_mode(cli: Cli) -> Result<()> {
     let client = PCloudClient::init()?;
 
     // Determine authentication method
-    let (password, auth_token) = {
+    let auth_token = {
         let client_guard = client
             .lock()
             .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
@@ -730,23 +709,13 @@ fn run_daemon_mode(cli: Cli) -> Result<()> {
         // Check if token was provided via CLI
         if let Some(ref token) = cli.auth_token {
             drop(client_guard);
-            (None, Some(SecretString::from(token.clone())))
-        }
-        // Check if password prompt was requested
-        else if cli.password_prompt {
-            drop(client_guard);
-            print_status(
-                StatusIndicator::Info,
-                "Password required (must be entered before daemonizing)",
-            );
-            let password = prompt_for_password("Password: ").map_err(PCloudError::Io)?;
-            (Some(password), None)
+            Some(SecretString::from(token.clone()))
         }
         // Check if we have saved credentials
         else if client_guard.has_saved_credentials() {
             print_status(StatusIndicator::Info, "Using saved credentials");
             drop(client_guard);
-            (None, None)
+            None
         }
         // No credentials - need interactive auth before daemonizing
         else {
@@ -756,13 +725,19 @@ fn run_daemon_mode(cli: Cli) -> Result<()> {
                 "Authentication required before daemon can start",
             );
 
-            let auth_result = handle_interactive_auth(&client, cli.should_save_credentials())?;
-            (auth_result, None)
+            handle_interactive_auth(&client, cli.should_save_credentials())?;
+            None
         }
     };
 
     // Get crypto password BEFORE daemonizing - can't prompt after fork
-    let crypto_password = get_crypto_password(&cli, password.as_ref())?;
+    let crypto_password = if cli.crypto_prompt {
+        print_step("Crypto password required");
+        let pwd = prompt_for_password("Crypto password: ").map_err(PCloudError::Io)?;
+        Some(pwd)
+    } else {
+        None
+    };
 
     println!();
     print_status(StatusIndicator::Info, "Starting pCloud daemon...");
@@ -788,15 +763,8 @@ fn run_daemon_mode(cli: Cli) -> Result<()> {
         // For now, we silently consume them
     });
 
-    // Apply authentication if we have credentials
-    if let Some(ref pwd) = password {
-        if let Some(ref username) = cli.username {
-            let mut client_guard = client
-                .lock()
-                .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
-            client_guard.authenticate(username, pwd, cli.should_save_credentials())?;
-        }
-    } else if let Some(ref token) = auth_token {
+    // Apply authentication if we have a token from CLI
+    if let Some(ref token) = auth_token {
         let mut client_guard = client
             .lock()
             .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
@@ -971,6 +939,22 @@ fn run_client_command_loop(client: &console_client::daemon::DaemonClient) -> Res
             InteractiveCommand::StopCrypto => DaemonCommand::StopCrypto,
             InteractiveCommand::Finalize => DaemonCommand::Finalize,
             InteractiveCommand::Status => DaemonCommand::Status,
+            InteractiveCommand::Logout => DaemonCommand::Logout,
+            InteractiveCommand::Unlink => {
+                match prompt_confirm(
+                    "This will remove all saved credentials and local sync data from the daemon. Continue?",
+                ) {
+                    Ok(true) => DaemonCommand::Unlink,
+                    Ok(false) => {
+                        println!("Unlink cancelled.");
+                        continue;
+                    }
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        continue;
+                    }
+                }
+            }
             InteractiveCommand::Quit => break,
             InteractiveCommand::Help => {
                 print_client_help();
@@ -991,10 +975,10 @@ fn run_client_command_loop(client: &console_client::daemon::DaemonClient) -> Res
             Ok(response) => {
                 print_daemon_response(&response);
 
-                // If we sent Finalize or received confirmation of shutdown, exit
+                // If we sent Finalize/Logout/Unlink or received confirmation of shutdown, exit
                 if matches!(
                     response,
-                    DaemonResponse::OkWithMessage(ref msg) if msg.contains("shut down")
+                    DaemonResponse::OkWithMessage(ref msg) if msg.contains("shut down") || msg.contains("shutting down")
                 ) {
                     println!("Daemon is shutting down, exiting client.");
                     break;
@@ -1049,6 +1033,8 @@ fn print_client_help() {
     println!("  stopcrypto, stop    - Lock encrypted folders");
     println!("  finalize, fin       - Tell daemon to finish sync and exit");
     println!("  status, s           - Show daemon status");
+    println!("  logout, lo          - Log out and clear saved credentials");
+    println!("  unlink, ul          - Unlink account and clear all local data");
     println!("  quit, q, exit       - Disconnect from daemon");
     println!("  help, h, ?          - Show this help");
     println!();
