@@ -234,15 +234,6 @@ impl Cli {
                 .to_string());
         }
 
-        // -o (commands_mode) in foreground mode requires authentication credentials
-        // Without -p or -t, the binary would attempt to initialize pclsync and connect
-        // before entering the command loop, which requires pre-specified credentials
-        if self.commands_mode && !self.commands_only && !self.password_prompt && self.auth_token.is_none() {
-            return Err("--commands requires authentication credentials. \
-                Use --password (-p) or --token (-t) to provide credentials."
-                .to_string());
-        }
-
         // --nosave and -s (savepassword) are mutually exclusive
         if self.nosave && self.save_password {
             return Err("Cannot use both --nosave and --savepassword. \
