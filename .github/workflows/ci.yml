@@ -328,8 +328,15 @@ jobs:
           body: |
             ## Installation
 
-            ### Linux — x86_64 (64-bit Intel/AMD)
+            ---
 
+            ### Linux
+
+            #### Binary download
+
+            Static binaries are available for three architectures. Pick the one matching your system:
+
+            **x86_64 (64-bit Intel/AMD)**
             ```bash
             curl -L -o pcloud https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/pcloud-linux-amd64
             chmod +x pcloud && mv pcloud ~/.local/bin/
@@ -337,74 +344,51 @@ jobs:
             # sudo mv pcloud /usr/local/bin/
             ```
 
-            ### Linux — ARM 64-bit (Raspberry Pi 4/5, AWS Graviton, etc.)
-
+            **ARM 64-bit (Raspberry Pi 4/5, AWS Graviton, etc.)**
             ```bash
             curl -L -o pcloud https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/pcloud-linux-arm64
             chmod +x pcloud && mv pcloud ~/.local/bin/
-            # System-wide install (requires root):
-            # sudo mv pcloud /usr/local/bin/
             ```
 
-            ### Linux — ARM 32-bit (Raspberry Pi 2/3, older ARM boards)
-
+            **ARM 32-bit (Raspberry Pi 2/3, older ARM boards)**
             ```bash
             curl -L -o pcloud https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/pcloud-linux-armhf
             chmod +x pcloud && mv pcloud ~/.local/bin/
-            # System-wide install (requires root):
-            # sudo mv pcloud /usr/local/bin/
             ```
 
-            ### Debian / Ubuntu — x86_64
+            > **Runtime dependencies for binary installs:** The binary requires FUSE 2 (`libfuse.so.2`) and OpenSSL 3 to be installed on your system. See the [Dependencies](#dependencies) section below.
+
+            #### Packages
+
+            ##### Debian / Ubuntu (.deb)
+
+            The `.deb` package will install runtime dependencies automatically.
+
+            | Architecture | Command |
+            |---|---|
+            | x86_64 | `curl -L -O https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ steps.pkgnames.outputs.deb_amd64 }} && sudo dpkg -i ${{ steps.pkgnames.outputs.deb_amd64 }}` |
+            | ARM 64-bit | `curl -L -O https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ steps.pkgnames.outputs.deb_arm64 }} && sudo dpkg -i ${{ steps.pkgnames.outputs.deb_arm64 }}` |
+            | ARM 32-bit | `curl -L -O https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ steps.pkgnames.outputs.deb_armhf }} && sudo dpkg -i ${{ steps.pkgnames.outputs.deb_armhf }}` |
+
+            ##### Fedora / RHEL (.rpm)
+
+            | Architecture | Command |
+            |---|---|
+            | x86_64 | `curl -L -O https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ steps.pkgnames.outputs.rpm_x86_64 }} && sudo rpm -i ${{ steps.pkgnames.outputs.rpm_x86_64 }}` |
+            | ARM 64-bit | `curl -L -O https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ steps.pkgnames.outputs.rpm_aarch64 }} && sudo rpm -i ${{ steps.pkgnames.outputs.rpm_aarch64 }}` |
+            | ARM 32-bit | `curl -L -O https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ steps.pkgnames.outputs.rpm_armv7hl }} && sudo rpm -i ${{ steps.pkgnames.outputs.rpm_armv7hl }}` |
+
+            ##### Arch Linux (build from source)
+
+            Requires the `base-devel` group. A [PKGBUILD](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/pkg/arch/PKGBUILD) is provided for x86_64, aarch64, and armv7h:
 
             ```bash
-            curl -L -O https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ steps.pkgnames.outputs.deb_amd64 }}
-            sudo dpkg -i ${{ steps.pkgnames.outputs.deb_amd64 }}
-            ```
-
-            ### Debian / Ubuntu — ARM 64-bit
-
-            ```bash
-            curl -L -O https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ steps.pkgnames.outputs.deb_arm64 }}
-            sudo dpkg -i ${{ steps.pkgnames.outputs.deb_arm64 }}
-            ```
-
-            ### Debian / Ubuntu — ARM 32-bit
-
-            ```bash
-            curl -L -O https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ steps.pkgnames.outputs.deb_armhf }}
-            sudo dpkg -i ${{ steps.pkgnames.outputs.deb_armhf }}
-            ```
-
-            ### Fedora / RHEL — x86_64
-
-            ```bash
-            curl -L -O https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ steps.pkgnames.outputs.rpm_x86_64 }}
-            sudo rpm -i ${{ steps.pkgnames.outputs.rpm_x86_64 }}
-            ```
-
-            ### Fedora / RHEL — ARM 64-bit
-
-            ```bash
-            curl -L -O https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ steps.pkgnames.outputs.rpm_aarch64 }}
-            sudo rpm -i ${{ steps.pkgnames.outputs.rpm_aarch64 }}
-            ```
-
-            ### Fedora / RHEL — ARM 32-bit
-
-            ```bash
-            curl -L -O https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ steps.pkgnames.outputs.rpm_armv7hl }}
-            sudo rpm -i ${{ steps.pkgnames.outputs.rpm_armv7hl }}
-            ```
-
-            ### Arch Linux (build from source)
-
-            A [PKGBUILD](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/pkg/arch/PKGBUILD) is included in the repository for x86_64, aarch64, and armv7h:
-
-            ```bash
+            sudo pacman -S --needed base-devel
             curl -L -O https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/pkg/arch/PKGBUILD
             makepkg -si
             ```
+
+            ---
 
             ### macOS (Apple Silicon & Intel)
 
@@ -420,6 +404,40 @@ jobs:
             chmod +x pcloud && mv pcloud ~/.local/bin/
             # System-wide install (requires root):
             # sudo mv pcloud /usr/local/bin/
+            ```
+
+            ---
+
+            ### Dependencies
+
+            The binary and packages require **FUSE 2** (`libfuse.so.2`) and **OpenSSL 3** at runtime. Package installs (`.deb`, `.rpm`) handle this automatically; for binary installs or if dependencies are missing, install them manually:
+
+            #### Debian / Ubuntu
+
+            ```bash
+            # Ubuntu 24.04+, Debian 13+ (note the t64 suffix for 64-bit time compatibility)
+            sudo apt update && sudo apt install -y libfuse2t64 openssl
+
+            # Ubuntu 22.04, Debian 11/12
+            sudo apt update && sudo apt install -y libfuse2 openssl
+            ```
+
+            #### Fedora / RHEL / CentOS
+
+            ```bash
+            # Fedora 36–43, RHEL 9/10
+            sudo dnf install -y fuse-libs openssl
+
+            # RHEL 8 / CentOS 8 (ships OpenSSL 1.1.1 by default — also install OpenSSL 3)
+            sudo yum install -y fuse-libs openssl openssl3
+            ```
+
+            > **Note on Fedora 40+:** The `fuse-libs` package providing `libfuse.so.2` has been removed from the default repos. You may need to install it from a Fedora 39 or older package, or use FUSE 3 with a compatibility layer.
+
+            #### Arch Linux
+
+            ```bash
+            sudo pacman -S fuse2 openssl
             ```
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
