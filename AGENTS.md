@@ -361,11 +361,23 @@ pub fn safe_function(&self, arg: &str) -> Result<()> {
 
 ## Known Issues and Limitations
 
-### Platform-Specific
+### Supported Linux Platforms
 
-1. **Linux**: Requires FUSE 2.x; user may need to be in `fuse` group
-2. **macOS**: Requires macFUSE; may need to allow system extension
-3. **Windows**: Not supported (FUSE dependency)
+Pre-built binaries are compiled on Ubuntu 22.04 (glibc 2.35). Minimum supported versions:
+
+| Distribution | Minimum Version | glibc |
+|---|---|---|
+| Ubuntu | 22.04 LTS | 2.35 |
+| Debian | 12 (Bookworm) | 2.36 |
+| Fedora | 36 | 2.35 |
+| RHEL / AlmaLinux | 9 | 2.34 |
+| Arch Linux | Rolling | latest |
+
+Additional runtime requirements:
+- **FUSE 2.x** — Debian 13+ and Ubuntu 24.04+ need `libfuse2t64`; Fedora 40+ removed `fuse-libs` from default repos
+- **OpenSSL 3.x** — RHEL 8 ships OpenSSL 1.1 only; requires `openssl3` or building from source
+- **Windows**: Not supported (FUSE dependency)
+- User may need to be in the `fuse` group on Linux
 
 ### Technical Limitations
 

@@ -24,11 +24,15 @@ To build from source instead, see [Building](#building) below.
 - Background daemon mode with IPC control
 - Secure password handling with automatic zeroization
 - Cross-platform support (Linux, macOS)
-- Full CLI compatibility with the original C++ client
+- CLI compatible with the original C++ client (credentials saved by default)
 
-## Prerequisites
+## Building
 
-### Linux (Debian/Ubuntu)
+> **Most users don't need to build from source.** Pre-built binaries and packages are available on the [Releases](https://github.com/pCloud/console-client/releases/latest) page.
+
+### Build Prerequisites
+
+#### Linux (Debian/Ubuntu)
 
 ```bash
 sudo apt-get install \
@@ -40,7 +44,7 @@ sudo apt-get install \
   libclang-dev
 ```
 
-### Linux (Fedora/RHEL)
+#### Linux (Fedora/RHEL)
 
 ```bash
 sudo dnf install \
@@ -53,7 +57,7 @@ sudo dnf install \
   clang-devel
 ```
 
-### Linux (Arch Linux)
+#### Linux (Arch Linux)
 
 ```bash
 sudo pacman -S \
@@ -65,7 +69,7 @@ sudo pacman -S \
   clang
 ```
 
-### macOS
+#### macOS
 
 ```bash
 brew install macfuse sqlite openssl llvm
@@ -75,8 +79,6 @@ brew install macfuse sqlite openssl llvm
 1. Open System Preferences > Security & Privacy
 2. Allow the macFUSE system extension
 3. Restart your Mac
-
-## Building
 
 ### Clone with Submodules
 
@@ -110,11 +112,11 @@ cargo build --release
 The build system supports three profiles that control the version suffix and
 whether crash reporting is included:
 
-| Profile     | Command                                                                                      | Version output  | Crash reporting |
-|-------------|----------------------------------------------------------------------------------------------|-----------------|-----------------|
-| Development | `cargo build`                                                                                | `0.1.0-dev`     | No              |
-| QA          | `BUGSNAG_API_KEY=<key> PCLOUD_BUILD_PROFILE=qa cargo build --release --features crash-reporting` | `0.1.0-qa`  | Yes             |
-| Release     | `BUGSNAG_API_KEY=<key> cargo build --release --features crash-reporting`                      | `0.1.0`         | Yes             |
+| Profile     | Command                                                                                      | Crash reporting |
+|-------------|----------------------------------------------------------------------------------------------|-----------------|
+| Development | `cargo build`                                                                                | No              |
+| QA          | `BUGSNAG_API_KEY=<key> PCLOUD_BUILD_PROFILE=qa cargo build --release --features crash-reporting` | Yes             |
+| Release     | `BUGSNAG_API_KEY=<key> cargo build --release --features crash-reporting`                      | Yes             |
 
 - **Development** — Default `cargo build` with no extra flags. Fast iteration,
   debug symbols, no crash reporting, no API key needed.
@@ -236,16 +238,18 @@ After registration, verify your email before logging in.
 
 | Flag | Long            | Description                               |
 |------|-----------------|-------------------------------------------|
-| -u   | --username      | pCloud account email (required)           |
-| -p   | --password      | Prompt for password                       |
+| -u   | --username      | pCloud account email                      |
+| -p   | --password      | Prompt for password (requires -u)         |
+| -t   | --token         | Authenticate with an auth token           |
 | -c   | --crypto        | Prompt for crypto password                |
 | -y   | --passascrypto  | Use login password as crypto password     |
 | -d   | --daemon        | Run as background daemon                  |
 | -o   | --commands      | Enable interactive command mode           |
-| -m   | --mountpoint    | Directory to mount pCloud                 |
+| -m   | --mountpoint    | Directory to mount pCloud (default: ~/pCloud) |
 | -k   | --client        | Send commands to running daemon           |
 | -n   | --newuser       | Register new account                      |
-| -s   | --savepassword  | Save password for auto-login              |
+| -s   | --savepassword  | Save credentials (default, kept for compatibility) |
+|      | --nosave        | Do not save credentials between sessions  |
 
 ### Interactive Commands
 
@@ -408,18 +412,19 @@ SIGFPE). It does not conflict with the existing signal handlers:
 
 ## Migrating from C++ Version
 
-The Rust version maintains full CLI compatibility with the original C++ client. Your existing scripts should work unchanged.
+The Rust version maintains CLI compatibility with the original C++ client. Most existing scripts should work unchanged.
 
 ### Differences
 
 1. **Binary name**: The Rust version is named `pcloud` (configurable in Cargo.toml)
-2. **Error messages**: More descriptive and structured
-3. **Exit codes**: Standardized (0 for success, non-zero for errors)
-4. **Improved signal handling**: Graceful shutdown on SIGTERM/SIGINT
+2. **Credentials saved by default**: Credentials are now saved automatically. The old `-s` flag is kept for compatibility but is a no-op. Use `--nosave` to disable saving.
+3. **Error messages**: More descriptive and structured
+4. **Exit codes**: Standardized (0 for success, non-zero for errors)
+5. **Improved signal handling**: Graceful shutdown on SIGTERM/SIGINT
 
 ### Unchanged
 
-- All CLI flags work identically (`-u`, `-p`, `-c`, `-y`, `-d`, `-o`, `-m`, `-k`, `-n`, `-s`)
+- All original CLI flags are accepted (`-u`, `-p`, `-c`, `-y`, `-d`, `-o`, `-m`, `-k`, `-n`, `-s`)
 - IPC protocol is compatible (can control Rust daemon from C++ client and vice versa)
 - Mountpoint and sync behavior identical (uses same pclsync library)
 - Interactive commands are the same (startcrypto, stopcrypto, finalize, quit)
@@ -431,14 +436,25 @@ The Rust version maintains full CLI compatibility with the original C++ client. 
 3. Replace the binary in your PATH
 4. Start with the same arguments you used before
 
-## Known Limitations
+## Supported Platforms
 
-1. **Platform support**: Primarily tested on Linux; macOS support is available but less tested
-2. **Windows**: Not supported (pclsync FUSE dependency requires Unix-like OS)
-3. **Memory management**: The pclsync C library controls memory allocation for sync operations
-4. **Threading**: pclsync uses internal threading; callbacks may fire from any thread
-5. **FUSE version**: Requires FUSE 2.x; FUSE 3.x may require additional configuration
-6. **Saved passwords**: Password storage location is determined by pclsync library
+Pre-built binaries are compiled on Ubuntu 22.04 and linked against **glibc 2.35**.
+Any Linux distribution shipping glibc 2.35 or later can run them directly.
+
+| Distribution | Minimum Version | Notes |
+|---|---|---|
+| Ubuntu | 22.04 LTS | |
+| Debian | 12 (Bookworm) | |
+| Fedora | 36 | Fedora 40+ removed `fuse-libs` from default repos; see [FUSE 2 note](#fuse-issues-on-linux) |
+| RHEL / AlmaLinux | 9 | RHEL 8 ships glibc 2.28 — build from source if needed |
+| Arch Linux | Rolling | |
+
+### Additional requirements
+
+- **FUSE 2.x** — FUSE 3.x is not supported. On Debian 13+ and Ubuntu 24.04+ install the `libfuse2t64` compatibility package.
+- **OpenSSL 3.x** — distributions shipping only OpenSSL 1.1 (e.g. RHEL 8) must install `openssl3` or build it from source.
+
+Older distributions can still be used by building from source on the target system (see [Building](#building)).
 
 ## Troubleshooting
 
