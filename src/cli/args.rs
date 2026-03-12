@@ -40,15 +40,28 @@ use clap::Parser;
     background daemon operation.\n\n\
     If no credentials are provided, an interactive authentication prompt \
     will be displayed offering web-based login or auth token input.")]
+#[command(after_long_help = "\
+ENVIRONMENT VARIABLES:\n\
+    PCLOUD_AUTH_TOKEN       Auth token (alternative to -t)\n\
+    PCLOUD_AUTH_TOKEN_FILE  Path to file containing auth token\n\
+    PCLOUD_CRYPTO_PASS     Crypto password (auto-enables crypto)\n\
+    PCLOUD_CRYPTO_PASS_FILE Path to file containing crypto password\n\n\
+    Direct env vars take priority over _FILE variants.\n\
+    Env-sourced tokens are ephemeral and never saved to the database.\n\
+    Environment variables are cleared from the process after reading.")]
 pub struct Cli {
     /// Use authentication token directly
     ///
     /// Bypasses interactive authentication.
     /// The token can be obtained from pCloud account settings.
+    /// Can also be set via PCLOUD_AUTH_TOKEN or PCLOUD_AUTH_TOKEN_FILE env vars.
     #[arg(short = 't', long = "token")]
     pub auth_token: Option<String>,
 
     /// Prompt for crypto password (interactive)
+    ///
+    /// Can also be set via PCLOUD_CRYPTO_PASS or PCLOUD_CRYPTO_PASS_FILE
+    /// env vars, which auto-enable crypto without this flag.
     #[arg(short = 'c', long = "crypto")]
     pub crypto_prompt: bool,
 

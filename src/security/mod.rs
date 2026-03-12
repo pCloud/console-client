@@ -73,9 +73,11 @@
 //! }
 //! ```
 
+pub mod env;
 pub mod password;
 
 // Re-export main types and functions for convenience
+pub use env::ResolvedSecrets;
 pub use password::{
     prompt_for_password, prompt_for_password_with_confirm,
     prompt_for_password_with_confirm_limited, zeroize_string, SecurePassword,

@@ -43,7 +43,7 @@ use console_client::cli::{
 };
 use console_client::error::{AuthError, PCloudError};
 use console_client::ffi::{register_status_callback, status_callback_trampoline, status_to_string};
-use console_client::security::{prompt_for_password, SecurePassword};
+use console_client::security::{prompt_for_password, ResolvedSecrets, SecurePassword};
 use console_client::utils::browser::{has_display, open_url};
 use console_client::utils::qrcode::{can_display_qr, generate_qr_code};
 use console_client::utils::terminal::{print_boxed, print_status, StatusIndicator};
@@ -114,33 +114,50 @@ fn run(cli: Cli) -> Result<()> {
         return run_client_mode(&cli);
     }
 
+    // Resolve secrets from environment variables early, before any prompts.
+    // This clears the env vars from the process for security.
+    let env_secrets = ResolvedSecrets::from_env()?;
+
     // Handle daemon mode
     if cli.daemonize {
-        return run_daemon_mode(cli);
+        return run_daemon_mode(cli, env_secrets);
     }
 
     // Normal foreground mode
-    run_foreground_mode(cli)
+    run_foreground_mode(cli, env_secrets)
 }
 
 /// Authentication method determined from CLI arguments and saved state.
 enum AuthMethod {
     /// Use saved auth token from database
     SavedToken,
-    /// Use provided auth token
+    /// Use provided auth token (from CLI, saved to DB per --nosave)
     Token(SecretString),
+    /// Use token from environment variable (ephemeral, never saved)
+    EnvToken(SecretString),
     /// Need to prompt user for authentication method
     NeedsInteractive,
 }
 
-/// Determine the authentication method based on CLI arguments.
-fn determine_auth_method(cli: &Cli, client: &Arc<Mutex<PCloudClient>>) -> Result<AuthMethod> {
-    // Check if token was provided via CLI
+/// Determine the authentication method based on CLI arguments, env vars, and saved state.
+///
+/// Priority: CLI `-t` > `PCLOUD_AUTH_TOKEN` env > saved credentials > interactive prompt
+fn determine_auth_method(
+    cli: &Cli,
+    client: &Arc<Mutex<PCloudClient>>,
+    env_token: Option<SecretString>,
+) -> Result<AuthMethod> {
+    // 1. Check if token was provided via CLI
     if let Some(ref token) = cli.auth_token {
         return Ok(AuthMethod::Token(SecretString::from(token.clone())));
     }
 
-    // Check if we have saved credentials
+    // 2. Check if token was provided via environment variable
+    if let Some(token) = env_token {
+        return Ok(AuthMethod::EnvToken(token));
+    }
+
+    // 3. Check if we have saved credentials
     {
         let client_guard = client
             .lock()
@@ -151,7 +168,7 @@ fn determine_auth_method(cli: &Cli, client: &Arc<Mutex<PCloudClient>>) -> Result
         }
     }
 
-    // No credentials provided and none saved - need interactive prompt
+    // 4. No credentials provided and none saved - need interactive prompt
     Ok(AuthMethod::NeedsInteractive)
 }
 
@@ -215,7 +232,7 @@ fn run_unlink() -> Result<()> {
 /// 4. Optionally sets up and/or starts crypto
 /// 5. Mounts the filesystem (defaults to ~/pCloud)
 /// 6. Enters the command loop or waits for signals
-fn run_foreground_mode(cli: Cli) -> Result<()> {
+fn run_foreground_mode(cli: Cli, env_secrets: ResolvedSecrets) -> Result<()> {
     // Set up signal handler for Ctrl+C
     setup_signal_handler()?;
 
@@ -241,7 +258,7 @@ fn run_foreground_mode(cli: Cli) -> Result<()> {
     });
 
     // 3. Determine and handle authentication
-    match determine_auth_method(&cli, &client)? {
+    match determine_auth_method(&cli, &client, env_secrets.auth_token)? {
         AuthMethod::SavedToken => {
             print_status(StatusIndicator::Info, "Using saved credentials");
         }
@@ -253,6 +270,22 @@ fn run_foreground_mode(cli: Cli) -> Result<()> {
             client_guard.set_auth_token(&token, cli.should_save_credentials())?;
             drop(client_guard);
             print_status(StatusIndicator::Success, "Authentication token set");
+        }
+        AuthMethod::EnvToken(token) => {
+            print_status(
+                StatusIndicator::Info,
+                "Setting authentication token from environment...",
+            );
+            let mut client_guard = client
+                .lock()
+                .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
+            // Env-sourced tokens are never saved (ephemeral by design)
+            client_guard.set_auth_token(&token, false)?;
+            drop(client_guard);
+            print_status(
+                StatusIndicator::Success,
+                "Authentication token set (from environment)",
+            );
         }
         AuthMethod::NeedsInteractive => {
             // No credentials - prompt user for authentication method
@@ -284,10 +317,23 @@ fn run_foreground_mode(cli: Cli) -> Result<()> {
         );
     }
 
-    // 5. Handle crypto setup/start if requested
-    if cli.crypto_prompt {
+    // 5. Handle crypto setup/start if requested via -c flag or env var
+    let crypto_secret = if let Some(env_crypto) = env_secrets.crypto_password {
+        // Crypto password from environment auto-enables crypto
+        print_status(
+            StatusIndicator::Info,
+            "Using crypto password from environment",
+        );
+        Some(env_crypto)
+    } else if cli.crypto_prompt {
         print_step("Crypto password required");
         let crypto_pwd = prompt_for_password("Crypto password: ").map_err(PCloudError::Io)?;
+        Some(crypto_pwd)
+    } else {
+        None
+    };
+
+    if let Some(ref crypto_pwd) = crypto_secret {
         let secure_crypto_pwd = SecurePassword::from_secret(crypto_pwd.clone());
         let crypto_secret = SecretString::from(secure_crypto_pwd.expose().to_string());
 
@@ -672,7 +718,7 @@ fn print_step(msg: &str) {
 /// - Passwords must be collected BEFORE daemonizing (can't prompt after fork)
 /// - The daemon creates a PID file at `/tmp/pcloud-<uid>.pid`
 /// - The daemon can be stopped with `kill -TERM $(cat /tmp/pcloud-<uid>.pid)`
-fn run_daemon_mode(cli: Cli) -> Result<()> {
+fn run_daemon_mode(cli: Cli, env_secrets: ResolvedSecrets) -> Result<()> {
     use console_client::daemon::{
         cleanup_pid_file, daemonize, is_daemon_running, is_reload_requested, is_shutdown_requested,
         setup_daemon_signals, DaemonConfig,
@@ -700,8 +746,8 @@ fn run_daemon_mode(cli: Cli) -> Result<()> {
     print_status(StatusIndicator::Info, "Initializing pCloud client...");
     let client = PCloudClient::init()?;
 
-    // Determine authentication method
-    let auth_token = {
+    // Determine authentication method and whether to save the token
+    let (auth_token, save_token) = {
         let client_guard = client
             .lock()
             .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
@@ -709,13 +755,26 @@ fn run_daemon_mode(cli: Cli) -> Result<()> {
         // Check if token was provided via CLI
         if let Some(ref token) = cli.auth_token {
             drop(client_guard);
-            Some(SecretString::from(token.clone()))
+            (
+                Some(SecretString::from(token.clone())),
+                cli.should_save_credentials(),
+            )
+        }
+        // Check if token was provided via environment variable
+        else if let Some(token) = env_secrets.auth_token {
+            drop(client_guard);
+            print_status(
+                StatusIndicator::Info,
+                "Using authentication token from environment",
+            );
+            // Env-sourced tokens are never saved (ephemeral by design)
+            (Some(token), false)
         }
         // Check if we have saved credentials
         else if client_guard.has_saved_credentials() {
             print_status(StatusIndicator::Info, "Using saved credentials");
             drop(client_guard);
-            None
+            (None, false)
         }
         // No credentials - need interactive auth before daemonizing
         else {
@@ -726,12 +785,19 @@ fn run_daemon_mode(cli: Cli) -> Result<()> {
             );
 
             handle_interactive_auth(&client, cli.should_save_credentials())?;
-            None
+            (None, false)
         }
     };
 
-    // Get crypto password BEFORE daemonizing - can't prompt after fork
-    let crypto_password = if cli.crypto_prompt {
+    // Get crypto password BEFORE daemonizing - can't prompt after fork.
+    // Env var auto-enables crypto without needing -c flag.
+    let crypto_password = if let Some(env_crypto) = env_secrets.crypto_password {
+        print_status(
+            StatusIndicator::Info,
+            "Using crypto password from environment",
+        );
+        Some(env_crypto)
+    } else if cli.crypto_prompt {
         print_step("Crypto password required");
         let pwd = prompt_for_password("Crypto password: ").map_err(PCloudError::Io)?;
         Some(pwd)
@@ -763,12 +829,12 @@ fn run_daemon_mode(cli: Cli) -> Result<()> {
         // For now, we silently consume them
     });
 
-    // Apply authentication if we have a token from CLI
+    // Apply authentication if we have a token from CLI or environment
     if let Some(ref token) = auth_token {
         let mut client_guard = client
             .lock()
             .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
-        client_guard.set_auth_token(token, cli.should_save_credentials())?;
+        client_guard.set_auth_token(token, save_token)?;
     }
 
     // Prepare mountpoint before starting sync (psync_start_sync mounts the FS)

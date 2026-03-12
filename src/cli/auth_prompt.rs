@@ -107,6 +107,12 @@ pub fn print_cli_auth_help() {
     println!("Token authentication:");
     println!("  pcloud -t YOUR_AUTH_TOKEN");
     println!();
+    println!("Environment variables (for containers/automation):");
+    println!("  PCLOUD_AUTH_TOKEN=<token> pcloud");
+    println!("  PCLOUD_AUTH_TOKEN_FILE=/run/secrets/token pcloud");
+    println!("  PCLOUD_CRYPTO_PASS=<password> pcloud");
+    println!("  PCLOUD_CRYPTO_PASS_FILE=/run/secrets/crypto pcloud");
+    println!();
     println!("Custom mount path:");
     println!("  pcloud -m /path/to/mount");
     println!();
