@@ -112,6 +112,7 @@ pub fn print_cli_auth_help() {
     println!("  PCLOUD_AUTH_TOKEN_FILE=/run/secrets/token pcloud");
     println!("  PCLOUD_CRYPTO_PASS=<password> pcloud");
     println!("  PCLOUD_CRYPTO_PASS_FILE=/run/secrets/crypto pcloud");
+    println!("  PCLOUD_MOUNTPOINT=/mnt/pcloud pcloud");
     println!();
     println!("Custom mount path:");
     println!("  pcloud -m /path/to/mount");

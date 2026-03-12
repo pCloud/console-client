@@ -45,10 +45,11 @@ ENVIRONMENT VARIABLES:\n\
     PCLOUD_AUTH_TOKEN       Auth token (alternative to -t)\n\
     PCLOUD_AUTH_TOKEN_FILE  Path to file containing auth token\n\
     PCLOUD_CRYPTO_PASS     Crypto password (auto-enables crypto)\n\
-    PCLOUD_CRYPTO_PASS_FILE Path to file containing crypto password\n\n\
+    PCLOUD_CRYPTO_PASS_FILE Path to file containing crypto password\n\
+    PCLOUD_MOUNTPOINT      Mountpoint path (alternative to -m)\n\n\
     Direct env vars take priority over _FILE variants.\n\
     Env-sourced tokens are ephemeral and never saved to the database.\n\
-    Environment variables are cleared from the process after reading.")]
+    Secret env vars are cleared from the process after reading.")]
 pub struct Cli {
     /// Use authentication token directly
     ///
@@ -76,6 +77,7 @@ pub struct Cli {
     /// Mountpoint for FUSE filesystem
     ///
     /// Defaults to ~/pCloud if not specified.
+    /// Can also be set via the PCLOUD_MOUNTPOINT env var.
     #[arg(short = 'm', long = "mountpoint")]
     pub mountpoint: Option<PathBuf>,
 
@@ -246,14 +248,19 @@ impl Cli {
         self.commands_mode
     }
 
-    /// Get the mountpoint, applying default if not specified.
+    /// Get the mountpoint, applying fallbacks if not specified.
     ///
-    /// If no mountpoint is specified, returns the default mountpoint
-    /// which is ~/pCloud.
+    /// Priority: CLI `-m` > `PCLOUD_MOUNTPOINT` env var > ~/pCloud default.
     pub fn get_mountpoint(&self) -> PathBuf {
-        self.mountpoint
-            .clone()
-            .unwrap_or_else(Self::default_mountpoint)
+        if let Some(ref mp) = self.mountpoint {
+            return mp.clone();
+        }
+        if let Ok(env_mp) = std::env::var("PCLOUD_MOUNTPOINT") {
+            if !env_mp.is_empty() {
+                return PathBuf::from(env_mp);
+            }
+        }
+        Self::default_mountpoint()
     }
 
     /// Get the default mountpoint path.
@@ -465,6 +472,30 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(cli.get_mountpoint(), PathBuf::from("/custom/path"));
+    }
+
+    #[test]
+    fn test_env_mountpoint() {
+        // CLI flag takes priority over env var
+        #[allow(unused_unsafe)]
+        unsafe {
+            std::env::set_var("PCLOUD_MOUNTPOINT", "/env/path");
+        }
+        let cli = Cli {
+            mountpoint: Some(PathBuf::from("/cli/path")),
+            ..Default::default()
+        };
+        assert_eq!(cli.get_mountpoint(), PathBuf::from("/cli/path"));
+
+        // Env var used when no CLI flag
+        let cli = Cli::default();
+        assert_eq!(cli.get_mountpoint(), PathBuf::from("/env/path"));
+
+        // Clean up
+        #[allow(unused_unsafe)]
+        unsafe {
+            std::env::remove_var("PCLOUD_MOUNTPOINT");
+        }
     }
 
     #[test]
