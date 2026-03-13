@@ -279,6 +279,28 @@ jobs:
     needs: [package, build-macos]
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Extract tag message
+        id: tag-message
+        run: |
+          # Fetch the annotated tag object (shallow checkout doesn't include it)
+          git fetch origin tag "$GITHUB_REF_NAME" --no-tags --force
+          TAG_MSG="$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME" 2>/dev/null || true)"
+          # Strip the tag name header line (first line) if it matches the tag
+          TAG_MSG="$(echo "$TAG_MSG" | sed '1{/^'"$GITHUB_REF_NAME"'$/d}')"
+          # Strip leading separator line
+          TAG_MSG="$(echo "$TAG_MSG" | sed '1{/^-\+$/d}')"
+          # Trim leading/trailing blank lines
+          TAG_MSG="$(echo "$TAG_MSG" | sed -e '/./,$!d' -e :a -e '/^\n*$/{$d;N;ba;}')"
+          {
+            echo "body<<TAGEOF"
+            echo "$TAG_MSG"
+            echo "TAGEOF"
+          } >> "$GITHUB_OUTPUT"
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts/
@@ -323,10 +345,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: ${{ github.ref_name }}
-          generate_release_notes: true
+          generate_release_notes: ${{ steps.tag-message.outputs.body == '' }}
           files: release/*
           body: |
-            ## Installation
+            ${{ steps.tag-message.outputs.body != '' && format('## What''s Changed\n\n{0}\n\n', steps.tag-message.outputs.body) || '' }}## Installation
 
             ---
 
