@@ -27,4 +27,5 @@ mod integration {
     mod cli_tests;
     mod daemon_tests;
     mod ipc_tests;
+    mod signal_tests;
 }

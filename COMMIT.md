@@ -48,6 +48,7 @@ The subject line follows this structure:
 | `Build`  | `build.rs`, compilation flags, linking, platform logic    |
 | `Deps`   | `Cargo.toml`/`Cargo.lock`, pclsync submodule bumps        |
 | `CI`     | GitHub Actions workflows, release automation              |
+| `Tests`  | Unit tests, integration tests, test infrastructure        |
 | `Docs`   | README, COMMIT.md, CLAUDE.md, doc comments                |
 
 ### Use the Imperative
