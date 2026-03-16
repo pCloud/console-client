@@ -11,9 +11,9 @@
 //!
 //! When running in daemon mode (`-d` flag):
 //! 1. Process daemonizes using double-fork via the `daemonize` crate
-//! 2. Creates PID file for tracking at `/tmp/pcloud-<uid>.pid`
+//! 2. Creates PID file for tracking at `/tmp/pcloud-cli-<uid>.pid`
 //! 3. Sets up signal handlers for graceful shutdown
-//! 4. Opens Unix domain socket at `/tmp/pcloud-<uid>.sock` for IPC
+//! 4. Opens Unix domain socket at `/tmp/pcloud-cli-<uid>.sock` for IPC
 //! 5. Listens for commands from client instances
 //!
 //! When running in commands-only mode (`-k` flag):

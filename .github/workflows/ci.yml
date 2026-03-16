@@ -120,7 +120,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: binary-${{ matrix.artifact-name }}
-          path: target/${{ matrix.target }}/release/pcloud
+          path: target/${{ matrix.target }}/release/pcloud-cli
           retention-days: 5
 
   build-macos:
@@ -205,18 +205,18 @@ jobs:
 
       - name: Create universal binary
         run: |
-          lipo -create -output pcloud-macos-universal \
-            target/aarch64-apple-darwin/release/pcloud \
-            target/x86_64-apple-darwin/release/pcloud
-          lipo -info pcloud-macos-universal
-          strip pcloud-macos-universal
+          lipo -create -output pcloud-cli-macos-universal \
+            target/aarch64-apple-darwin/release/pcloud-cli \
+            target/x86_64-apple-darwin/release/pcloud-cli
+          lipo -info pcloud-cli-macos-universal
+          strip pcloud-cli-macos-universal
 
       - name: Upload universal binary
         if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v'))
         uses: actions/upload-artifact@v4
         with:
           name: binary-macos-universal
-          path: pcloud-macos-universal
+          path: pcloud-cli-macos-universal
           retention-days: 5
 
   package:
@@ -253,7 +253,7 @@ jobs:
           path: target/${{ matrix.target }}/release/
 
       - name: Ensure binary is executable
-        run: chmod +x target/${{ matrix.target }}/release/pcloud
+        run: chmod +x target/${{ matrix.target }}/release/pcloud-cli
 
       - name: Build .deb
         run: cargo deb --no-build --target ${{ matrix.target }}
@@ -262,7 +262,7 @@ jobs:
         run: cargo generate-rpm --target ${{ matrix.target }}
 
       - name: Strip binary
-        run: ${{ matrix.strip-cmd }} target/${{ matrix.target }}/release/pcloud
+        run: ${{ matrix.strip-cmd }} target/${{ matrix.target }}/release/pcloud-cli
 
       - name: Upload packages
         uses: actions/upload-artifact@v4
@@ -272,7 +272,7 @@ jobs:
           path: |
             target/${{ matrix.target }}/debian/*.deb
             target/${{ matrix.target }}/generate-rpm/*.rpm
-            target/${{ matrix.target }}/release/pcloud
+            target/${{ matrix.target }}/release/pcloud-cli
 
   release:
     runs-on: ubuntu-latest
@@ -313,8 +313,8 @@ jobs:
           for arch in linux-amd64 linux-arm64 linux-armhf; do
             if [ -d "artifacts/packages-${arch}" ]; then
               # Rename binary with arch suffix
-              cp "artifacts/packages-${arch}/release/pcloud" "release/pcloud-${arch}" 2>/dev/null || \
-              cp "artifacts/packages-${arch}/"*/release/pcloud "release/pcloud-${arch}" 2>/dev/null || true
+              cp "artifacts/packages-${arch}/release/pcloud-cli" "release/pcloud-cli-${arch}" 2>/dev/null || \
+              cp "artifacts/packages-${arch}/"*/release/pcloud-cli "release/pcloud-cli-${arch}" 2>/dev/null || true
 
               # Copy .deb packages
               find "artifacts/packages-${arch}" -name '*.deb' -exec cp {} release/ \; 2>/dev/null || true
@@ -334,7 +334,7 @@ jobs:
 
           # macOS universal binary
           if [ -d "artifacts/binary-macos-universal" ]; then
-            cp "artifacts/binary-macos-universal/pcloud-macos-universal" "release/pcloud-macos-universal" 2>/dev/null || true
+            cp "artifacts/binary-macos-universal/pcloud-cli-macos-universal" "release/pcloud-cli-macos-universal" 2>/dev/null || true
           fi
 
           ls -la release/
@@ -369,22 +369,22 @@ jobs:
 
             **x86_64 (64-bit Intel/AMD)**
             ```bash
-            curl -L -o pcloud https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/pcloud-linux-amd64
-            chmod +x pcloud && mv pcloud ~/.local/bin/
+            curl -L -o pcloud-cli https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/pcloud-cli-linux-amd64
+            chmod +x pcloud-cli && mv pcloud-cli ~/.local/bin/
             # System-wide install (requires root):
-            # sudo mv pcloud /usr/local/bin/
+            # sudo mv pcloud-cli /usr/local/bin/
             ```
 
             **ARM 64-bit (Raspberry Pi 4/5, AWS Graviton, etc.)**
             ```bash
-            curl -L -o pcloud https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/pcloud-linux-arm64
-            chmod +x pcloud && mv pcloud ~/.local/bin/
+            curl -L -o pcloud-cli https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/pcloud-cli-linux-arm64
+            chmod +x pcloud-cli && mv pcloud-cli ~/.local/bin/
             ```
 
             **ARM 32-bit (Raspberry Pi 2/3, older ARM boards)**
             ```bash
-            curl -L -o pcloud https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/pcloud-linux-armhf
-            chmod +x pcloud && mv pcloud ~/.local/bin/
+            curl -L -o pcloud-cli https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/pcloud-cli-linux-armhf
+            chmod +x pcloud-cli && mv pcloud-cli ~/.local/bin/
             ```
 
             > **Runtime dependencies for binary installs:** The binary requires FUSE 2 (`libfuse.so.2`), SQLite 3, and OpenSSL 3 to be installed on your system. See the [Dependencies](#dependencies) section below.
@@ -430,10 +430,10 @@ jobs:
             > ```
 
             ```bash
-            curl -L -o pcloud https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/pcloud-macos-universal
-            chmod +x pcloud && mv pcloud ~/.local/bin/
+            curl -L -o pcloud-cli https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/pcloud-cli-macos-universal
+            chmod +x pcloud-cli && mv pcloud-cli ~/.local/bin/
             # System-wide install (requires root):
-            # sudo mv pcloud /usr/local/bin/
+            # sudo mv pcloud-cli /usr/local/bin/
             ```
 
             ---

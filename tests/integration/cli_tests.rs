@@ -15,7 +15,7 @@ use predicates::prelude::*;
 
 /// Get a Command instance for the console-client binary.
 fn pcloud_cmd() -> Command {
-    assert_cmd::cargo_bin_cmd!("pcloud")
+    assert_cmd::cargo_bin_cmd!("pcloud-cli")
 }
 
 // ============================================================================
@@ -94,7 +94,7 @@ fn test_version_flag_long() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("pcloud"));
+        .stdout(predicate::str::contains("pcloud-cli"));
 }
 
 // ============================================================================

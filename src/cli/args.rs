@@ -72,7 +72,7 @@ static AFTER_HELP: LazyLock<String> = LazyLock::new(build_after_help);
 /// - Web-based login (opens browser with QR code)
 /// - Auth token entry
 #[derive(Parser, Debug, Clone, Default)]
-#[command(name = "pcloud")]
+#[command(name = "pcloud-cli")]
 #[command(version = &**VERSION_STRING, about = "pCloud Console Client")]
 #[command(long_about = "Mount pCloud storage as a local filesystem.\n\n\
     This client allows you to access your pCloud storage through a FUSE \
@@ -116,12 +116,13 @@ pub struct Cli {
     #[arg(short = 'k', long = "client")]
     pub commands_only: bool,
 
-    /// Launch the TUI dashboard instead of CLI mode
+    /// Disable the TUI and use plain CLI output
     ///
-    /// Displays a terminal user interface with real-time status,
-    /// transfer progress, crypto controls, and an activity log.
-    #[arg(long = "tui")]
-    pub tui: bool,
+    /// By default the client launches a terminal user interface (TUI).
+    /// Use this flag to get the classic line-oriented CLI behavior,
+    /// suitable for scripts and headless environments.
+    #[arg(long = "non-interactive")]
+    pub non_interactive: bool,
 
     /// Do not save credentials between sessions
     ///
@@ -242,28 +243,6 @@ impl Cli {
                     --doctor is a standalone diagnostic command."
                     .to_string());
             }
-            if self.tui {
-                return Err("Cannot use both --doctor and --tui. \
-                    --doctor is a standalone diagnostic command."
-                    .to_string());
-            }
-        }
-
-        // TUI mode conflicts with daemon, client, and commands modes
-        if self.tui && self.daemonize {
-            return Err("Cannot use both --tui and --daemon. \
-                TUI mode runs in the foreground."
-                .to_string());
-        }
-        if self.tui && self.commands_only {
-            return Err("Cannot use both --tui and --client. \
-                TUI mode runs its own interface."
-                .to_string());
-        }
-        if self.tui && self.commands_mode {
-            return Err("Cannot use both --tui and --commands. \
-                TUI mode provides its own interactive interface."
-                .to_string());
         }
 
         // Can't use both -d (daemon) and -k (client/commands_only)
@@ -396,21 +375,21 @@ mod tests {
 
     #[test]
     fn test_parse_no_args() {
-        let cli = Cli::parse_from_args(["pcloud"]);
+        let cli = Cli::parse_from_args(["pcloud-cli"]);
         assert!(cli.auth_token.is_none());
         assert!(!cli.daemonize);
     }
 
     #[test]
     fn test_parse_token_flag() {
-        let cli = Cli::parse_from_args(["pcloud", "-t", "my-auth-token"]);
+        let cli = Cli::parse_from_args(["pcloud-cli", "-t", "my-auth-token"]);
         assert_eq!(cli.auth_token, Some("my-auth-token".to_string()));
     }
 
     #[test]
     fn test_parse_long_flags() {
         let cli = Cli::parse_from_args([
-            "pcloud",
+            "pcloud-cli",
             "--token",
             "my-token",
             "--daemon",
@@ -425,7 +404,7 @@ mod tests {
     #[test]
     fn test_parse_all_flags() {
         let cli = Cli::parse_from_args([
-            "pcloud",
+            "pcloud-cli",
             "-t",
             "token",
             "-c",
@@ -604,7 +583,7 @@ mod tests {
         assert!(!cli.commands_mode);
         assert!(cli.mountpoint.is_none());
         assert!(!cli.commands_only);
-        assert!(!cli.tui);
+        assert!(!cli.non_interactive);
         assert!(!cli.nosave);
         assert!(!cli.logout);
         assert!(!cli.unlink);
@@ -629,21 +608,21 @@ mod tests {
 
     #[test]
     fn test_parse_nosave_flag() {
-        let cli = Cli::parse_from_args(["pcloud", "--nosave"]);
+        let cli = Cli::parse_from_args(["pcloud-cli", "--nosave"]);
         assert!(cli.nosave);
         assert!(!cli.should_save_credentials());
     }
 
     #[test]
     fn test_parse_logout_flag() {
-        let cli = Cli::parse_from_args(["pcloud", "--logout"]);
+        let cli = Cli::parse_from_args(["pcloud-cli", "--logout"]);
         assert!(cli.logout);
         assert!(cli.is_logout());
     }
 
     #[test]
     fn test_parse_unlink_flag() {
-        let cli = Cli::parse_from_args(["pcloud", "--unlink"]);
+        let cli = Cli::parse_from_args(["pcloud-cli", "--unlink"]);
         assert!(cli.unlink);
         assert!(cli.is_unlink());
     }
@@ -660,7 +639,7 @@ mod tests {
 
     #[test]
     fn test_parse_doctor_flag() {
-        let cli = Cli::parse_from_args(["pcloud", "--doctor"]);
+        let cli = Cli::parse_from_args(["pcloud-cli", "--doctor"]);
         assert!(cli.doctor);
         assert!(cli.is_doctor());
     }
@@ -723,14 +702,8 @@ mod tests {
     }
 
     #[test]
-    fn test_doctor_conflicts_with_tui() {
-        let cli = Cli {
-            doctor: true,
-            tui: true,
-            ..Default::default()
-        };
-        let result = cli.validate();
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("--doctor"));
+    fn test_non_interactive_flag() {
+        let cli = Cli::parse_from_args(["pcloud-cli", "--non-interactive"]);
+        assert!(cli.non_interactive);
     }
 }

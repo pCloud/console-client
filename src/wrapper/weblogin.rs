@@ -305,9 +305,9 @@ mod tests {
     fn test_default_config() {
         let config = WebLoginConfig::default();
         assert_eq!(config.view, "login");
-        assert_eq!(config.client_id, "pcloud-console");
-        assert_eq!(config.theme, "dark");
-        assert_eq!(config.os, 3);
+        assert_eq!(config.client_id, "pcloud-cli");
+        assert_eq!(config.theme, "light");
+        assert_eq!(config.os, 7);
         assert!(!config.app_version.is_empty());
     }
 
@@ -327,7 +327,7 @@ mod tests {
             device_id: "test-id".to_string(),
             os_version: "Linux 5.0".to_string(),
             app_version: "1.0.0".to_string(),
-            client_id: "pcloud-console".to_string(),
+            client_id: "pcloud-cli".to_string(),
             lang: "en".to_string(),
             theme: "dark".to_string(),
             os: 3,

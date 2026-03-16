@@ -19,7 +19,7 @@
 //! # Security
 //!
 //! - Socket file has 0600 permissions (owner-only access)
-//! - Socket path is user-specific (`/tmp/pcloud-<uid>.sock`)
+//! - Socket path is user-specific (`/tmp/pcloud-cli-<uid>.sock`)
 //!
 //! # Example
 //!
@@ -569,7 +569,7 @@ fn process_command(
 /// # Example
 ///
 /// ```ignore
-/// let client = DaemonClient::new("/tmp/pcloud-1000.sock");
+/// let client = DaemonClient::new("/tmp/pcloud-cli-1000.sock");
 ///
 /// // Check if daemon is alive
 /// match client.send_command(DaemonCommand::Ping)? {

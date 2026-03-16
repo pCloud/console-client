@@ -103,8 +103,8 @@ cargo build
 cargo build --release
 
 # The binary will be at:
-# - Debug: target/debug/pcloud
-# - Release: target/release/pcloud
+# - Debug: target/debug/pcloud-cli
+# - Release: target/release/pcloud-cli
 ```
 
 ### Build Profiles
@@ -126,7 +126,7 @@ whether crash reporting is included:
 - **Release** — Production binary. Reports are tagged with release stage
   `production` in Bugsnag.
 
-The version string is available at runtime via `pcloud --version`.
+The version string is available at runtime via `pcloud-cli --version`.
 
 ### Install
 
@@ -135,13 +135,13 @@ The version string is available at runtime via `pcloud --version`.
 cargo install --path .
 
 # Or copy manually
-sudo cp target/release/pcloud /usr/local/bin/
+sudo cp target/release/pcloud-cli /usr/local/bin/
 ```
 
 ### Linux Packages
 
 Pre-built packages can be produced for Debian/Ubuntu, Fedora/RHEL, and Arch Linux.
-All packages install the binary to `/usr/bin/pcloud`.
+All packages install the binary to `/usr/bin/pcloud-cli`.
 
 #### .deb (Debian/Ubuntu)
 
@@ -182,17 +182,20 @@ Runtime dependencies: `fuse2`, `sqlite`, `openssl`, `zlib`, `systemd-libs`.
 ### Basic Usage
 
 ```bash
-# Mount pCloud with password prompt
-pcloud -u user@email.com -p -m /mnt/pcloud
+# Launch TUI dashboard (default mode)
+pcloud-cli -m /mnt/pcloud
 
-# With crypto support (prompts for separate crypto password)
-pcloud -u user@email.com -p -c -m /mnt/pcloud
+# Mount with a specific token
+pcloud-cli -t <auth-token> -m /mnt/pcloud
 
-# Use login password as crypto password
-pcloud -u user@email.com -p -y -m /mnt/pcloud
+# With crypto support (prompts for crypto password)
+pcloud-cli -t <auth-token> -c -m /mnt/pcloud
 
-# Interactive mode (allows runtime commands)
-pcloud -u user@email.com -p -o -m /mnt/pcloud
+# Classic CLI mode (non-interactive, for scripts)
+pcloud-cli --non-interactive -t <auth-token> -m /mnt/pcloud
+
+# Interactive commands mode (classic CLI)
+pcloud-cli --non-interactive -t <auth-token> -o -m /mnt/pcloud
 ```
 
 ### Daemon Mode
@@ -201,10 +204,10 @@ Run pCloud client as a background service:
 
 ```bash
 # Start as daemon
-pcloud -u user@email.com -p -d -m /mnt/pcloud
+pcloud-cli -t <auth-token> -d -m /mnt/pcloud
 
 # Send commands to running daemon
-pcloud -u user@email.com -k -o
+pcloud-cli -k -o
 > startcrypto
 > stopcrypto
 > status
@@ -212,44 +215,35 @@ pcloud -u user@email.com -k -o
 ```
 
 The daemon creates:
-- PID file at `/tmp/pcloud-<uid>.pid`
-- Unix socket at `/tmp/pcloud-<uid>.sock`
+- PID file at `/tmp/pcloud-cli-<uid>.pid`
+- Unix socket at `/tmp/pcloud-cli-<uid>.sock`
 
 To stop the daemon:
 
 ```bash
 # Graceful shutdown
-pcloud -u user@email.com -k -o
+pcloud-cli -k -o
 > finalize
 
 # Or using the PID file
-kill $(cat /tmp/pcloud-$(id -u).pid)
+kill $(cat /tmp/pcloud-cli-$(id -u).pid)
 ```
-
-### New User Registration
-
-```bash
-pcloud -u newuser@email.com -p -n
-```
-
-After registration, verify your email before logging in.
 
 ### Command Reference
 
-| Flag | Long            | Description                               |
-|------|-----------------|-------------------------------------------|
-| -u   | --username      | pCloud account email                      |
-| -p   | --password      | Prompt for password (requires -u)         |
-| -t   | --token         | Authenticate with an auth token           |
-| -c   | --crypto        | Prompt for crypto password                |
-| -y   | --passascrypto  | Use login password as crypto password     |
-| -d   | --daemon        | Run as background daemon                  |
-| -o   | --commands      | Enable interactive command mode           |
-| -m   | --mountpoint    | Directory to mount pCloud (default: ~/pCloud) |
-| -k   | --client        | Send commands to running daemon           |
-| -n   | --newuser       | Register new account                      |
-| -s   | --savepassword  | Save credentials (default, kept for compatibility) |
-|      | --nosave        | Do not save credentials between sessions  |
+| Flag | Long              | Description                               |
+|------|-------------------|-------------------------------------------|
+| -t   | --token           | Authenticate with an auth token           |
+| -c   | --crypto          | Prompt for crypto password                |
+| -d   | --daemon          | Run as background daemon                  |
+| -o   | --commands        | Enable interactive command mode           |
+| -m   | --mountpoint      | Directory to mount pCloud (default: ~/pCloud) |
+| -k   | --client          | Send commands to running daemon           |
+|      | --non-interactive | Disable TUI, use plain CLI output         |
+|      | --nosave          | Do not save credentials between sessions  |
+|      | --logout          | Clear saved credentials and exit          |
+|      | --unlink          | Clear all local data and exit             |
+|      | --doctor          | Run dependency and environment diagnostics |
 
 ### Interactive Commands
 
@@ -412,29 +406,70 @@ SIGFPE). It does not conflict with the existing signal handlers:
 
 ## Migrating from C++ Version
 
-The Rust version maintains CLI compatibility with the original C++ client. Most existing scripts should work unchanged.
+This section covers migration from both the original C++ `pcloud` client and from
+earlier v3.x preview releases of the Rust rewrite.
 
-### Differences
+### What Changed
 
-1. **Binary name**: The Rust version is named `pcloud` (configurable in Cargo.toml)
-2. **Credentials saved by default**: Credentials are now saved automatically. The old `-s` flag is kept for compatibility but is a no-op. Use `--nosave` to disable saving.
-3. **Error messages**: More descriptive and structured
-4. **Exit codes**: Standardized (0 for success, non-zero for errors)
-5. **Improved signal handling**: Graceful shutdown on SIGTERM/SIGINT
+| Area | C++ / earlier v3.x | Current |
+|---|---|---|
+| **Binary name** | `pcloud` | `pcloud-cli` |
+| **Default mode** | Plain CLI | TUI dashboard (use `--non-interactive` for scripts) |
+| **Runtime paths** | `/tmp/pcloud-<uid>.pid`, `.sock` | `/tmp/pcloud-cli-<uid>.pid`, `.sock` |
+| **Credentials** | Saved only with `-s` | Saved by default; use `--nosave` to disable |
+| **Removed flags** | — | `-u`, `-p`, `-s`, `-n`, `-y` (use `-t`/`--token` or web login instead) |
+| **Error messages** | Terse C++ output | Structured Rust errors with context |
+| **Exit codes** | Varied | Standardized (0 = success, non-zero = error) |
 
 ### Unchanged
 
-- All original CLI flags are accepted (`-u`, `-p`, `-c`, `-y`, `-d`, `-o`, `-m`, `-k`, `-n`, `-s`)
-- IPC protocol is compatible (can control Rust daemon from C++ client and vice versa)
-- Mountpoint and sync behavior identical (uses same pclsync library)
-- Interactive commands are the same (startcrypto, stopcrypto, finalize, quit)
+- IPC protocol is compatible (bincode over Unix socket, same command set)
+- Mountpoint and sync behavior identical (same pclsync library)
+- Interactive commands are the same (`startcrypto`, `stopcrypto`, `finalize`, `quit`)
+- Crypto folder support (`-c` / `--crypto`)
+- Daemon mode (`-d` / `--daemon`) and client mode (`-k` / `--client`)
 
-### Migration Steps
+### Step-by-Step Migration
 
-1. Build the Rust version
-2. Stop any running C++ daemon (`pcloud -k finalize` or kill the process)
-3. Replace the binary in your PATH
-4. Start with the same arguments you used before
+1. **Stop the old daemon**
+   ```bash
+   # If the old C++ daemon is running:
+   kill $(cat /tmp/pcloud-$(id -u).pid) 2>/dev/null
+   rm -f /tmp/pcloud-$(id -u).pid /tmp/pcloud-$(id -u).sock
+   ```
+
+2. **Install the new binary**
+   Replace `pcloud` in your PATH with `pcloud-cli` (see [Installation](#installation)).
+
+3. **Update scripts and aliases**
+   ```bash
+   # Before
+   pcloud -u user@email.com -p -d -m /mnt/pcloud
+
+   # After — non-interactive mode for scripts
+   pcloud-cli --non-interactive -t <auth-token> -d -m /mnt/pcloud
+   ```
+
+4. **Update systemd units** (if applicable)
+   ```ini
+   # Change ExecStart binary path and flags
+   ExecStart=/usr/bin/pcloud-cli --non-interactive -t <token> -d -m /mnt/pcloud
+   # Update PIDFile path
+   PIDFile=/tmp/pcloud-cli-%U.pid
+   ```
+
+5. **Update monitoring or health checks**
+   - PID file is now at `/tmp/pcloud-cli-<uid>.pid`
+   - Socket is now at `/tmp/pcloud-cli-<uid>.sock`
+
+### Compatibility Notes
+
+- The old `--tui` flag has been removed; TUI is now the default. Pass `--non-interactive`
+  to restore the classic line-oriented CLI behavior.
+- Authentication is now token-based. Obtain a token from your pCloud account settings
+  or use the interactive web login flow (available in both TUI and non-interactive modes).
+- Credentials are saved by default (equivalent to the old `-s` flag). Use `--nosave` to
+  prevent saving, or `--logout` to clear previously saved credentials.
 
 ## Supported Platforms
 
@@ -481,14 +516,14 @@ Ensure `libclang-dev` (Linux) or `llvm` (macOS) is installed.
 **"Daemon is already running"**
 ```bash
 # Check for existing process
-cat /tmp/pcloud-$(id -u).pid
+cat /tmp/pcloud-cli-$(id -u).pid
 # Kill if necessary
-kill $(cat /tmp/pcloud-$(id -u).pid)
+kill $(cat /tmp/pcloud-cli-$(id -u).pid)
 ```
 
 **"Connection failed" in client mode**
 - Ensure a daemon is running with `-d` flag
-- Check socket file exists: `ls -la /tmp/pcloud-$(id -u).sock`
+- Check socket file exists: `ls -la /tmp/pcloud-cli-$(id -u).sock`
 
 ### FUSE Issues on Linux
 

@@ -12,7 +12,7 @@ name = "console_client"
 path = "src/lib.rs"
 
 [[bin]]
-name = "pcloud"
+name = "pcloud-cli"
 path = "src/main.rs"
 
 [features]
@@ -66,14 +66,14 @@ Mounts your pCloud drive as a virtual FUSE filesystem, \
 supports encrypted (Crypto) folders, and runs as a daemon."""
 depends = "libfuse2, libsqlite3-0, libssl3, zlib1g, libudev1"
 assets = [
-    ["target/release/pcloud", "usr/bin/", "755"],
-    ["LICENSE", "usr/share/doc/pcloud/copyright", "644"],
+    ["target/release/pcloud-cli", "usr/bin/", "755"],
+    ["LICENSE", "usr/share/doc/pcloud-cli/copyright", "644"],
 ]
 
 [package.metadata.generate-rpm]
 assets = [
-    { source = "target/release/pcloud", dest = "/usr/bin/pcloud", mode = "0755" },
-    { source = "LICENSE", dest = "/usr/share/licenses/pcloud/LICENSE", mode = "0644" },
+    { source = "target/release/pcloud-cli", dest = "/usr/bin/pcloud-cli", mode = "0755" },
+    { source = "LICENSE", dest = "/usr/share/licenses/pcloud-cli/LICENSE", mode = "0644" },
 ]
 
 [package.metadata.generate-rpm.requires]

@@ -34,6 +34,6 @@ check() {
 
 package() {
     cd "${srcdir}/${pkgname}"
-    install -Dm755 "target/release/pcloud" "${pkgdir}/usr/bin/pcloud"
+    install -Dm755 "target/release/pcloud-cli" "${pkgdir}/usr/bin/pcloud-cli"
     install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
 }

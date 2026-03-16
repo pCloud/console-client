@@ -19,13 +19,13 @@ echo "Building release with debug info..."
 RUSTFLAGS="-C debuginfo=2" cargo build --release --features crash-reporting
 
 echo "Generating Breakpad symbol file..."
-dump_syms ./target/release/pcloud > pcloud.sym
+dump_syms ./target/release/pcloud-cli > pcloud-cli.sym
 
 echo "Uploading symbols to Bugsnag..."
-bugsnag-cli upload breakpad ./pcloud.sym --api-key="$BUGSNAG_API_KEY"
+bugsnag-cli upload breakpad ./pcloud-cli.sym --api-key="$BUGSNAG_API_KEY"
 
 echo "Stripping binary for distribution..."
-strip ./target/release/pcloud
+strip ./target/release/pcloud-cli
 
 echo "Done. Symbols uploaded and binary stripped."
-rm -f pcloud.sym
+rm -f pcloud-cli.sym

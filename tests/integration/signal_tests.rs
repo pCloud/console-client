@@ -15,8 +15,8 @@ use assert_cmd::cargo::CommandCargoExt;
 /// The process will attempt `psync_init()` which may block,
 /// giving us a window to test signal handling.
 fn spawn_pcloud(mountpoint: &str) -> std::process::Child {
-    std::process::Command::cargo_bin("pcloud")
-        .expect("Failed to find pcloud binary")
+    std::process::Command::cargo_bin("pcloud-cli")
+        .expect("Failed to find pcloud-cli binary")
         .args(["-m", mountpoint])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

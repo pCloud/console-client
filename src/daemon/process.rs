@@ -50,7 +50,7 @@ impl Default for DaemonConfig {
         // Use UID to create user-specific paths
         let uid = unsafe { libc::getuid() };
         Self {
-            pid_file: PathBuf::from(format!("/tmp/pcloud-{}.pid", uid)),
+            pid_file: PathBuf::from(format!("/tmp/pcloud-cli-{}.pid", uid)),
             working_directory: std::env::temp_dir(),
             user: None,
             group: None,
@@ -76,7 +76,7 @@ impl DaemonConfig {
     /// Returns a user-specific socket path in /tmp.
     pub fn socket_path(&self) -> PathBuf {
         let uid = unsafe { libc::getuid() };
-        PathBuf::from(format!("/tmp/pcloud-{}.sock", uid))
+        PathBuf::from(format!("/tmp/pcloud-cli-{}.sock", uid))
     }
 
     /// Set the user to run as after daemonizing.
@@ -262,7 +262,7 @@ mod tests {
 
         assert_eq!(
             config.pid_file,
-            PathBuf::from(format!("/tmp/pcloud-{}.pid", uid))
+            PathBuf::from(format!("/tmp/pcloud-cli-{}.pid", uid))
         );
         assert!(config.user.is_none());
         assert!(config.group.is_none());
@@ -278,7 +278,7 @@ mod tests {
     fn test_daemon_config_socket_path() {
         let config = DaemonConfig::default();
         let uid = unsafe { libc::getuid() };
-        let expected = PathBuf::from(format!("/tmp/pcloud-{}.sock", uid));
+        let expected = PathBuf::from(format!("/tmp/pcloud-cli-{}.sock", uid));
         assert_eq!(config.socket_path(), expected);
     }
 

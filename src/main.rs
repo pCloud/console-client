@@ -15,18 +15,19 @@
 //! # Usage
 //!
 //! ```text
-//! pcloud [OPTIONS]
+//! pcloud-cli [OPTIONS]
 //!
 //! Options:
-//!   -t <token>       Authentication token
-//!   -c               Prompt for crypto password
-//!   -d               Daemonize (background)
-//!   -o               Commands mode
-//!   -m <path>        Mountpoint
-//!   -k               Commands only (talk to daemon)
-//!   --logout         Clear saved credentials
-//!   --unlink         Clear all local data
-//!   --nosave         Don't save credentials
+//!   -t <token>          Authentication token
+//!   -c                  Prompt for crypto password
+//!   -d                  Daemonize (background)
+//!   -o                  Commands mode
+//!   -m <path>           Mountpoint
+//!   -k                  Commands only (talk to daemon)
+//!   --non-interactive   Disable TUI, use plain CLI output
+//!   --logout            Clear saved credentials
+//!   --unlink            Clear all local data
+//!   --nosave            Don't save credentials
 //! ```
 
 use std::process::ExitCode;
@@ -99,7 +100,8 @@ fn main() -> ExitCode {
 /// - `--unlink`: Clear all local data and exit
 /// - `--client`: Client mode (talk to existing daemon)
 /// - `--daemon`: Daemon mode (background service)
-/// - Default: Foreground mode (interactive)
+/// - `--non-interactive`: Classic CLI foreground mode
+/// - Default: TUI mode (interactive dashboard)
 fn run(cli: Cli) -> Result<()> {
     // Handle --doctor diagnostics (before init)
     if cli.is_doctor() {
@@ -128,13 +130,13 @@ fn run(cli: Cli) -> Result<()> {
         return run_daemon_mode(cli, env_secrets);
     }
 
-    // TUI mode
-    if cli.tui {
-        return run_tui_mode(cli, env_secrets);
+    // Non-interactive (classic CLI) mode
+    if cli.non_interactive {
+        return run_foreground_mode(cli, env_secrets);
     }
 
-    // Normal foreground mode
-    run_foreground_mode(cli, env_secrets)
+    // Default: TUI mode
+    run_tui_mode(cli, env_secrets)
 }
 
 /// Authentication method determined from CLI arguments and saved state.
