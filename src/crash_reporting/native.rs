@@ -85,6 +85,7 @@ pub fn install(_client: Arc<Bugsnag>) {
         }
     };
 
+    #[allow(unused_variables)]
     let child_pid = child.id();
 
     // Give the server a moment to start listening

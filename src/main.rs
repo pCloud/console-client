@@ -101,6 +101,11 @@ fn main() -> ExitCode {
 /// - `--daemon`: Daemon mode (background service)
 /// - Default: Foreground mode (interactive)
 fn run(cli: Cli) -> Result<()> {
+    // Handle --doctor diagnostics (before init)
+    if cli.is_doctor() {
+        return console_client::utils::deps::run_doctor();
+    }
+
     // Handle logout/unlink operations first
     if cli.is_logout() {
         return run_logout();

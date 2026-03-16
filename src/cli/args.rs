@@ -144,6 +144,14 @@ pub struct Cli {
     /// after unlinking.
     #[arg(long = "unlink")]
     pub unlink: bool,
+
+    /// Run dependency and environment diagnostics
+    ///
+    /// Checks that all required shared libraries (FUSE, OpenSSL, SQLite, etc.)
+    /// are available, verifies FUSE access, and provides distro-specific
+    /// install commands for any missing dependencies.
+    #[arg(long = "doctor")]
+    pub doctor: bool,
 }
 
 impl Cli {
@@ -212,6 +220,35 @@ impl Cli {
     /// assert!(cli.validate().is_err());
     /// ```
     pub fn validate(&self) -> Result<(), String> {
+        // --doctor is a standalone diagnostic command
+        if self.doctor {
+            if self.daemonize {
+                return Err("Cannot use both --doctor and --daemon. \
+                    --doctor is a standalone diagnostic command."
+                    .to_string());
+            }
+            if self.commands_only {
+                return Err("Cannot use both --doctor and --client. \
+                    --doctor is a standalone diagnostic command."
+                    .to_string());
+            }
+            if self.logout {
+                return Err("Cannot use both --doctor and --logout. \
+                    --doctor is a standalone diagnostic command."
+                    .to_string());
+            }
+            if self.unlink {
+                return Err("Cannot use both --doctor and --unlink. \
+                    --doctor is a standalone diagnostic command."
+                    .to_string());
+            }
+            if self.tui {
+                return Err("Cannot use both --doctor and --tui. \
+                    --doctor is a standalone diagnostic command."
+                    .to_string());
+            }
+        }
+
         // TUI mode conflicts with daemon, client, and commands modes
         if self.tui && self.daemonize {
             return Err("Cannot use both --tui and --daemon. \
@@ -345,6 +382,11 @@ impl Cli {
     /// Check if this is an unlink operation.
     pub fn is_unlink(&self) -> bool {
         self.unlink
+    }
+
+    /// Check if this is a doctor (diagnostics) operation.
+    pub fn is_doctor(&self) -> bool {
+        self.doctor
     }
 }
 
@@ -566,6 +608,7 @@ mod tests {
         assert!(!cli.nosave);
         assert!(!cli.logout);
         assert!(!cli.unlink);
+        assert!(!cli.doctor);
         assert!(cli.should_save_credentials());
     }
 
@@ -613,5 +656,81 @@ mod tests {
             ..Default::default()
         };
         assert!(cli.validate().is_ok());
+    }
+
+    #[test]
+    fn test_parse_doctor_flag() {
+        let cli = Cli::parse_from_args(["pcloud", "--doctor"]);
+        assert!(cli.doctor);
+        assert!(cli.is_doctor());
+    }
+
+    #[test]
+    fn test_doctor_standalone_valid() {
+        let cli = Cli {
+            doctor: true,
+            ..Default::default()
+        };
+        assert!(cli.validate().is_ok());
+    }
+
+    #[test]
+    fn test_doctor_conflicts_with_daemon() {
+        let cli = Cli {
+            doctor: true,
+            daemonize: true,
+            ..Default::default()
+        };
+        let result = cli.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("--doctor"));
+    }
+
+    #[test]
+    fn test_doctor_conflicts_with_client() {
+        let cli = Cli {
+            doctor: true,
+            commands_only: true,
+            ..Default::default()
+        };
+        let result = cli.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("--doctor"));
+    }
+
+    #[test]
+    fn test_doctor_conflicts_with_logout() {
+        let cli = Cli {
+            doctor: true,
+            logout: true,
+            ..Default::default()
+        };
+        let result = cli.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("--doctor"));
+    }
+
+    #[test]
+    fn test_doctor_conflicts_with_unlink() {
+        let cli = Cli {
+            doctor: true,
+            unlink: true,
+            ..Default::default()
+        };
+        let result = cli.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("--doctor"));
+    }
+
+    #[test]
+    fn test_doctor_conflicts_with_tui() {
+        let cli = Cli {
+            doctor: true,
+            tui: true,
+            ..Default::default()
+        };
+        let result = cli.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("--doctor"));
     }
 }

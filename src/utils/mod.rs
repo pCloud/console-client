@@ -16,6 +16,7 @@
 
 pub mod browser;
 pub mod cstring;
+pub mod deps;
 pub mod mount;
 pub mod qrcode;
 pub mod terminal;

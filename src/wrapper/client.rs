@@ -141,6 +141,12 @@ impl PCloudClient {
             if result != 0 {
                 // Get the specific error code from the C library
                 let error_code = unsafe { raw::psync_get_last_error() };
+
+                // Print distro-specific remediation hint if available
+                if let Some(hint) = crate::utils::deps::init_error_hint(error_code) {
+                    eprintln!("\n{}\n", hint);
+                }
+
                 return Err(PCloudError::Ffi(FfiError::init_failed(error_code)));
             }
 
