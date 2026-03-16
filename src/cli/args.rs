@@ -85,6 +85,13 @@ pub struct Cli {
     #[arg(short = 'k', long = "client")]
     pub commands_only: bool,
 
+    /// Launch the TUI dashboard instead of CLI mode
+    ///
+    /// Displays a terminal user interface with real-time status,
+    /// transfer progress, crypto controls, and an activity log.
+    #[arg(long = "tui")]
+    pub tui: bool,
+
     /// Do not save credentials between sessions
     ///
     /// By default, credentials are saved for automatic login on next run.
@@ -174,6 +181,23 @@ impl Cli {
     /// assert!(cli.validate().is_err());
     /// ```
     pub fn validate(&self) -> Result<(), String> {
+        // TUI mode conflicts with daemon, client, and commands modes
+        if self.tui && self.daemonize {
+            return Err("Cannot use both --tui and --daemon. \
+                TUI mode runs in the foreground."
+                .to_string());
+        }
+        if self.tui && self.commands_only {
+            return Err("Cannot use both --tui and --client. \
+                TUI mode runs its own interface."
+                .to_string());
+        }
+        if self.tui && self.commands_mode {
+            return Err("Cannot use both --tui and --commands. \
+                TUI mode provides its own interactive interface."
+                .to_string());
+        }
+
         // Can't use both -d (daemon) and -k (client/commands_only)
         if self.daemonize && self.commands_only {
             return Err("Cannot use both --daemon and --client mode. \
@@ -507,6 +531,7 @@ mod tests {
         assert!(!cli.commands_mode);
         assert!(cli.mountpoint.is_none());
         assert!(!cli.commands_only);
+        assert!(!cli.tui);
         assert!(!cli.nosave);
         assert!(!cli.logout);
         assert!(!cli.unlink);

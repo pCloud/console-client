@@ -123,6 +123,11 @@ fn run(cli: Cli) -> Result<()> {
         return run_daemon_mode(cli, env_secrets);
     }
 
+    // TUI mode
+    if cli.tui {
+        return run_tui_mode(cli, env_secrets);
+    }
+
     // Normal foreground mode
     run_foreground_mode(cli, env_secrets)
 }
@@ -221,6 +226,80 @@ fn run_unlink() -> Result<()> {
         "Account unlinked. All local data has been cleared.",
     );
     Ok(())
+}
+
+/// Run the TUI dashboard mode.
+///
+/// Initializes the client, sets up the mountpoint, and launches the
+/// Ratatui-based terminal UI which handles authentication, crypto,
+/// and sync status interactively.
+fn run_tui_mode(cli: Cli, env_secrets: ResolvedSecrets) -> Result<()> {
+    // Initialize pCloud client
+    let client = PCloudClient::init()?;
+
+    // Apply auth token if provided via CLI or env
+    match determine_auth_method(&cli, &client, env_secrets.auth_token)? {
+        AuthMethod::SavedToken => {}
+        AuthMethod::Token(token) => {
+            let mut client_guard = client
+                .lock()
+                .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
+            client_guard.set_auth_token(&token, cli.should_save_credentials())?;
+        }
+        AuthMethod::EnvToken(token) => {
+            let mut client_guard = client
+                .lock()
+                .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
+            client_guard.set_auth_token(&token, false)?;
+        }
+        AuthMethod::NeedsInteractive => {
+            // TUI will handle auth interactively
+        }
+    };
+
+    // Prepare mountpoint
+    let mountpoint = cli.get_mountpoint();
+    {
+        let mut client_guard = client
+            .lock()
+            .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
+
+        if !mountpoint.exists() {
+            std::fs::create_dir_all(&mountpoint).map_err(PCloudError::Io)?;
+        }
+        client_guard.set_fs_root(&mountpoint)?;
+    }
+
+    // Handle crypto from env/CLI before entering TUI
+    if let Some(env_crypto) = env_secrets.crypto_password {
+        let secure_crypto_pwd = SecurePassword::from_secret(env_crypto);
+        let crypto_secret = SecretString::from(secure_crypto_pwd.expose().to_string());
+
+        let mut client_guard = client
+            .lock()
+            .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
+
+        if !client_guard.is_crypto_setup() {
+            client_guard.setup_crypto(&crypto_secret, "")?;
+        }
+        client_guard.start_crypto(&crypto_secret)?;
+    } else if cli.crypto_prompt {
+        let crypto_pwd = prompt_for_password("Crypto password: ").map_err(PCloudError::Io)?;
+        let secure_crypto_pwd = SecurePassword::from_secret(crypto_pwd);
+        let crypto_secret = SecretString::from(secure_crypto_pwd.expose().to_string());
+
+        let mut client_guard = client
+            .lock()
+            .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
+
+        if !client_guard.is_crypto_setup() {
+            client_guard.setup_crypto(&crypto_secret, "")?;
+        }
+        client_guard.start_crypto(&crypto_secret)?;
+    }
+
+    // Launch TUI (handles sync start, callbacks, and event loop)
+    console_client::tui::run(client, &cli)
 }
 
 /// Run the client in foreground mode.

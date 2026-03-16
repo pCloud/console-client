@@ -34,6 +34,7 @@ pub mod daemon;
 pub mod error;
 pub mod ffi;
 pub mod security;
+pub mod tui;
 pub mod utils;
 pub mod wrapper;
 
