@@ -176,6 +176,105 @@ pub fn prompt_confirm(message: &str) -> Result<bool> {
     Ok(input == "y" || input == "yes")
 }
 
+/// High-friction confirmation prompt requiring the user to type a directory name.
+///
+/// Used for destructive operations where a simple y/N is insufficient.
+/// Reads input character-by-character in raw terminal mode so that
+/// pressing Esc immediately cancels the operation.
+///
+/// # Returns
+///
+/// `true` only if the user types `dir_name` exactly and presses Enter.
+/// `false` if the user presses Esc or submits non-matching input.
+pub fn prompt_confirm_by_name(dir_name: &str) -> Result<bool> {
+    print!("Type \"{}\" to confirm (Esc to cancel): ", dir_name);
+    io::stdout().flush().map_err(PCloudError::Io)?;
+
+    let input = read_line_raw().map_err(PCloudError::Io)?;
+
+    match input {
+        None => {
+            // Esc was pressed
+            println!();
+            Ok(false)
+        }
+        Some(s) => Ok(s == dir_name),
+    }
+}
+
+/// Read a line from stdin in raw terminal mode.
+///
+/// Returns `None` if Esc is pressed, `Some(input)` on Enter.
+/// Handles backspace for basic line editing.
+fn read_line_raw() -> io::Result<Option<String>> {
+    use std::os::unix::io::AsRawFd;
+
+    let stdin_fd = io::stdin().as_raw_fd();
+
+    // Save original terminal settings
+    let mut orig_termios = std::mem::MaybeUninit::<libc::termios>::uninit();
+    if unsafe { libc::tcgetattr(stdin_fd, orig_termios.as_mut_ptr()) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let orig_termios = unsafe { orig_termios.assume_init() };
+
+    // Enter raw mode: disable canonical mode and echo
+    let mut raw = orig_termios;
+    raw.c_lflag &= !(libc::ICANON | libc::ECHO);
+    raw.c_cc[libc::VMIN] = 1;
+    raw.c_cc[libc::VTIME] = 0;
+    if unsafe { libc::tcsetattr(stdin_fd, libc::TCSANOW, &raw) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    let result = read_line_raw_loop();
+
+    // Restore original terminal settings (always, even on error)
+    unsafe { libc::tcsetattr(stdin_fd, libc::TCSANOW, &orig_termios) };
+
+    result
+}
+
+/// Inner loop for raw line reading. Separated so terminal restore always runs.
+fn read_line_raw_loop() -> io::Result<Option<String>> {
+    use std::io::Read;
+
+    let mut buf = [0u8; 1];
+    let mut input = String::new();
+    let stdin = io::stdin();
+
+    loop {
+        stdin.lock().read_exact(&mut buf)?;
+        match buf[0] {
+            // Esc
+            0x1b => return Ok(None),
+            // Enter
+            b'\n' | b'\r' => {
+                println!();
+                return Ok(Some(input));
+            }
+            // Backspace / DEL
+            0x7f | 0x08 => {
+                if input.pop().is_some() {
+                    // Move cursor back, overwrite with space, move back again
+                    print!("\x08 \x08");
+                    io::stdout().flush()?;
+                }
+            }
+            // Ctrl-C
+            0x03 => return Ok(None),
+            // Regular printable character
+            c if c >= 0x20 => {
+                input.push(c as char);
+                print!("{}", c as char);
+                io::stdout().flush()?;
+            }
+            // Ignore other control characters
+            _ => {}
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

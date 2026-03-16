@@ -6,7 +6,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use crate::cli::prompt_confirm;
+use crate::cli::{prompt_confirm, prompt_confirm_by_name};
 use crate::error::{FilesystemError, PCloudError};
 
 /// Check whether an OS error code indicates a stale FUSE mount.
@@ -73,6 +73,9 @@ pub fn ensure_mountpoint(path: &Path) -> Result<(), PCloudError> {
             if !meta.is_dir() {
                 return Err(FilesystemError::NotADirectory(path.to_path_buf()).into());
             }
+            if !is_dir_empty(path)? {
+                return handle_nonempty_dir(path);
+            }
             Ok(())
         }
         Err(e) => {
@@ -90,6 +93,67 @@ pub fn ensure_mountpoint(path: &Path) -> Result<(), PCloudError> {
             Err(PCloudError::Io(e))
         }
     }
+}
+
+/// Check whether a directory is empty.
+fn is_dir_empty(path: &Path) -> Result<bool, PCloudError> {
+    let mut entries = std::fs::read_dir(path).map_err(PCloudError::Io)?;
+    Ok(entries.next().is_none())
+}
+
+/// Handle a non-empty mountpoint directory.
+///
+/// Warns the user that mounting will hide existing contents, lists what's
+/// inside, and requires them to type the directory name to confirm deletion.
+fn handle_nonempty_dir(path: &Path) -> Result<(), PCloudError> {
+    let entries: Vec<_> = std::fs::read_dir(path)
+        .map_err(PCloudError::Io)?
+        .filter_map(|e| e.ok())
+        .collect();
+
+    let count = entries.len();
+    let dir_name = path
+        .file_name()
+        .unwrap_or(path.as_os_str())
+        .to_string_lossy();
+
+    eprintln!();
+    eprintln!(
+        "Warning: mountpoint {} is not empty ({} entries).",
+        path.display(),
+        count
+    );
+    eprintln!("Mounting here will hide the existing contents.");
+    eprintln!();
+
+    let preview_limit = 10;
+    for entry in entries.iter().take(preview_limit) {
+        eprintln!("  {}", entry.file_name().to_string_lossy());
+    }
+    if count > preview_limit {
+        eprintln!(
+            "  [+{} file(s), {} file(s) in total]",
+            count - preview_limit,
+            count
+        );
+    }
+    eprintln!();
+
+    eprintln!("To continue, the directory contents will be permanently deleted.");
+
+    let confirmed = prompt_confirm_by_name(&dir_name)?;
+    if !confirmed {
+        return Err(FilesystemError::MountPoint(format!(
+            "Non-empty mountpoint at {}. Clear it manually or choose a different path.",
+            path.display(),
+        ))
+        .into());
+    }
+
+    std::fs::remove_dir_all(path).map_err(PCloudError::Io)?;
+    std::fs::create_dir_all(path).map_err(PCloudError::Io)?;
+
+    Ok(())
 }
 
 /// Handle a detected stale FUSE mount by prompting the user.
@@ -156,6 +220,25 @@ mod tests {
 
         let err = ensure_mountpoint(&file).unwrap_err();
         assert!(err.to_string().contains("Not a directory"));
+    }
+
+    #[test]
+    fn test_empty_directory_is_empty() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("empty");
+        fs::create_dir(&dir).unwrap();
+
+        assert!(is_dir_empty(&dir).unwrap());
+    }
+
+    #[test]
+    fn test_nonempty_directory_is_not_empty() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("nonempty");
+        fs::create_dir(&dir).unwrap();
+        fs::write(dir.join("file.txt"), "data").unwrap();
+
+        assert!(!is_dir_empty(&dir).unwrap());
     }
 
     #[test]

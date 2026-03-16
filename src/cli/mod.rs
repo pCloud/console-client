@@ -32,7 +32,8 @@ pub mod commands;
 // Re-export main types for convenience
 pub use args::Cli;
 pub use auth_prompt::{
-    print_cli_auth_help, prompt_auth_choice, prompt_confirm, prompt_token, AuthChoice,
+    print_cli_auth_help, prompt_auth_choice, prompt_confirm, prompt_confirm_by_name, prompt_token,
+    AuthChoice,
 };
 pub use commands::{CommandPrompt, InteractiveCommand};
 
