@@ -10,7 +10,9 @@ use crate::utils::qrcode::generate_qr_code;
 use crate::wrapper::{AuthState, CryptoState, PCloudClient, WebLoginConfig};
 
 use super::event_types::TuiEvent;
-use super::state::{ActivityEntry, CryptoAction, InputMode, StatusMessageKind, TuiState};
+use super::state::{
+    ActivityEntry, CryptoAction, InputMode, Screen, StatusMessageKind, TuiState,
+};
 
 /// The main TUI application.
 pub struct App {
@@ -108,17 +110,42 @@ impl App {
             InputMode::AuthWebWaiting(_) => self.handle_auth_waiting_key(key),
             InputMode::PasswordPrompt(_) => self.handle_password_key(key),
             InputMode::HintPrompt => self.handle_hint_key(key),
+            InputMode::UnlinkConfirm => self.handle_unlink_confirm_key(key),
         }
     }
 
     fn handle_normal_key(&mut self, key: KeyEvent) {
+        // Global keys (work on any screen)
         match key.code {
             KeyCode::Char('q') | KeyCode::Char('Q') => {
                 self.state.should_quit = true;
+                return;
             }
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.state.should_quit = true;
+                return;
             }
+            KeyCode::Char('1') => {
+                self.state.active_screen = Screen::Dashboard;
+                return;
+            }
+            KeyCode::Char('2') => {
+                self.state.active_screen = Screen::Help;
+                return;
+            }
+            KeyCode::Char('3') => {
+                self.state.active_screen = Screen::About;
+                return;
+            }
+            _ => {}
+        }
+
+        // Dashboard-only keys
+        if self.state.active_screen != Screen::Dashboard {
+            return;
+        }
+
+        match key.code {
             KeyCode::Tab => {
                 self.state.active_panel = self.state.active_panel.next();
             }
@@ -142,14 +169,31 @@ impl App {
                     self.state.log_state.select(Some(len - 1));
                 }
             }
-            KeyCode::Char('u') => {
-                self.start_crypto_unlock();
+            KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.handle_crypto_action();
             }
-            KeyCode::Char('l') => {
-                self.lock_crypto();
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.state.input_mode = InputMode::UnlinkConfirm;
             }
-            KeyCode::Char('S') => {
-                self.start_crypto_setup();
+            _ => {}
+        }
+    }
+
+    fn handle_unlink_confirm_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                if let Ok(mut guard) = self.client.lock() {
+                    guard.unlink();
+                }
+                self.state.set_status_message(
+                    "Account unlinked. Exiting...".into(),
+                    StatusMessageKind::Success,
+                );
+                self.state.input_mode = InputMode::Normal;
+                self.state.should_quit = true;
+            }
+            KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                self.state.input_mode = InputMode::Normal;
             }
             _ => {}
         }
@@ -280,6 +324,14 @@ impl App {
 
     // ===== Crypto operations =====
 
+    fn handle_crypto_action(&mut self) {
+        match &self.state.crypto_state {
+            CryptoState::Started => self.lock_crypto(),
+            CryptoState::SetupComplete | CryptoState::Stopped => self.start_crypto_unlock(),
+            CryptoState::NotSetup | CryptoState::Failed(_) => self.start_crypto_setup(),
+        }
+    }
+
     fn start_crypto_unlock(&mut self) {
         if let Ok(guard) = self.client.lock() {
             if guard.is_crypto_started() {
@@ -291,7 +343,7 @@ impl App {
             }
             if !guard.is_crypto_setup() {
                 self.state.set_status_message(
-                    "Crypto not set up. Press Shift+S to setup".into(),
+                    "Crypto not set up. Press Ctrl+L to setup".into(),
                     StatusMessageKind::Error,
                 );
                 return;

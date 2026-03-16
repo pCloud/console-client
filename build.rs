@@ -179,6 +179,51 @@ fn main() {
     println!("cargo:rustc-env=PCLOUD_VERSION={}", version);
     println!("cargo:rerun-if-env-changed=PCLOUD_BUILD_PROFILE");
     println!("cargo:rerun-if-env-changed=BUGSNAG_API_KEY");
+
+    // Emit console-client git commit hash
+    if let Ok(output) = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .output()
+    {
+        if output.status.success() {
+            let hash = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let short = &hash[..7.min(hash.len())];
+            println!("cargo:rustc-env=PCLOUD_GIT_COMMIT={}", hash);
+            println!("cargo:rustc-env=PCLOUD_GIT_COMMIT_SHORT={}", short);
+        }
+    }
+
+    // Emit pclsync submodule git commit hash
+    if let Ok(output) = std::process::Command::new("git")
+        .args(["-C", "pclsync", "rev-parse", "HEAD"])
+        .output()
+    {
+        if output.status.success() {
+            let hash = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let short = &hash[..7.min(hash.len())];
+            println!("cargo:rustc-env=PCLSYNC_GIT_COMMIT={}", hash);
+            println!("cargo:rustc-env=PCLSYNC_GIT_COMMIT_SHORT={}", short);
+        }
+    }
+
+    // Parse PSYNC_LIB_VERSION from pclsync/psettings.h
+    let psettings_path = pclsync_dir.join("psettings.h");
+    if let Ok(contents) = std::fs::read_to_string(&psettings_path) {
+        for line in contents.lines() {
+            if line.contains("PSYNC_LIB_VERSION") {
+                if let Some(start) = line.find('"') {
+                    if let Some(end) = line[start + 1..].find('"') {
+                        let ver = &line[start + 1..start + 1 + end];
+                        println!("cargo:rustc-env=PSYNC_LIB_VERSION={}", ver);
+                    }
+                }
+            }
+        }
+    }
+
+    println!("cargo:rerun-if-changed=.git/HEAD");
+    println!("cargo:rerun-if-changed=.git/refs/");
+    println!("cargo:rerun-if-changed=pclsync/psettings.h");
 }
 
 /// Generate Rust bindings for pclsync C structs using bindgen.

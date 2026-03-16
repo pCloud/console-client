@@ -17,8 +17,48 @@
 //! ```
 
 use std::path::PathBuf;
+use std::sync::LazyLock;
 
 use clap::Parser;
+
+/// Build a multi-line version string including pclsync info.
+fn build_version_string() -> String {
+    let version = env!("PCLOUD_VERSION");
+    let commit = option_env!("PCLOUD_GIT_COMMIT_SHORT").unwrap_or("unknown");
+    let pclsync_ver = option_env!("PSYNC_LIB_VERSION").unwrap_or("unknown");
+    let pclsync_commit = option_env!("PCLSYNC_GIT_COMMIT_SHORT").unwrap_or("unknown");
+    format!(
+        "{} ({})\npclsync {} ({})",
+        version, commit, pclsync_ver, pclsync_commit
+    )
+}
+
+static VERSION_STRING: LazyLock<String> = LazyLock::new(build_version_string);
+
+/// Build the after_long_help text including build info.
+fn build_after_help() -> String {
+    let commit = option_env!("PCLOUD_GIT_COMMIT_SHORT").unwrap_or("unknown");
+    let pclsync_ver = option_env!("PSYNC_LIB_VERSION").unwrap_or("unknown");
+    let pclsync_commit = option_env!("PCLSYNC_GIT_COMMIT_SHORT").unwrap_or("unknown");
+    format!(
+        "\
+ENVIRONMENT VARIABLES:\n\
+    PCLOUD_AUTH_TOKEN       Auth token (alternative to -t)\n\
+    PCLOUD_AUTH_TOKEN_FILE  Path to file containing auth token\n\
+    PCLOUD_CRYPTO_PASS     Crypto password (auto-enables crypto)\n\
+    PCLOUD_CRYPTO_PASS_FILE Path to file containing crypto password\n\
+    PCLOUD_MOUNTPOINT      Mountpoint path (alternative to -m)\n\n\
+    Direct env vars take priority over _FILE variants.\n\
+    Env-sourced tokens are ephemeral and never saved to the database.\n\
+    Secret env vars are cleared from the process after reading.\n\n\
+BUILD INFO:\n\
+    Console client     {}\n\
+    pclsync library    {} ({})",
+        commit, pclsync_ver, pclsync_commit
+    )
+}
+
+static AFTER_HELP: LazyLock<String> = LazyLock::new(build_after_help);
 
 /// pCloud Console Client - Mount pCloud storage as a local filesystem.
 ///
@@ -33,23 +73,14 @@ use clap::Parser;
 /// - Auth token entry
 #[derive(Parser, Debug, Clone, Default)]
 #[command(name = "pcloud")]
-#[command(version = env!("PCLOUD_VERSION"), about = "pCloud Console Client")]
+#[command(version = &**VERSION_STRING, about = "pCloud Console Client")]
 #[command(long_about = "Mount pCloud storage as a local filesystem.\n\n\
     This client allows you to access your pCloud storage through a FUSE \
     filesystem mount, with support for encrypted folders (Crypto) and \
     background daemon operation.\n\n\
     If no credentials are provided, an interactive authentication prompt \
     will be displayed offering web-based login or auth token input.")]
-#[command(after_long_help = "\
-ENVIRONMENT VARIABLES:\n\
-    PCLOUD_AUTH_TOKEN       Auth token (alternative to -t)\n\
-    PCLOUD_AUTH_TOKEN_FILE  Path to file containing auth token\n\
-    PCLOUD_CRYPTO_PASS     Crypto password (auto-enables crypto)\n\
-    PCLOUD_CRYPTO_PASS_FILE Path to file containing crypto password\n\
-    PCLOUD_MOUNTPOINT      Mountpoint path (alternative to -m)\n\n\
-    Direct env vars take priority over _FILE variants.\n\
-    Env-sourced tokens are ephemeral and never saved to the database.\n\
-    Secret env vars are cleared from the process after reading.")]
+#[command(after_long_help = &**AFTER_HELP)]
 pub struct Cli {
     /// Use authentication token directly
     ///

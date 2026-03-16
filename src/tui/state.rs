@@ -75,6 +75,14 @@ pub struct ActivityEntry {
     pub is_error: bool,
 }
 
+/// Top-level screen / tab.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Screen {
+    Dashboard,
+    Help,
+    About,
+}
+
 /// Which panel currently has focus.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Panel {
@@ -119,6 +127,8 @@ pub enum InputMode {
     PasswordPrompt(CryptoAction),
     /// Collecting hint after password for crypto setup
     HintPrompt,
+    /// Confirming account unlink (destructive)
+    UnlinkConfirm,
 }
 
 /// Which crypto action we're collecting a password for.
@@ -140,6 +150,7 @@ const MAX_ACTIVITY_LOG: usize = 100;
 
 /// The full TUI state.
 pub struct TuiState {
+    pub active_screen: Screen,
     pub status: StatusSnapshot,
     pub auth_state: AuthState,
     pub crypto_state: CryptoState,
@@ -162,6 +173,7 @@ pub struct TuiState {
 impl TuiState {
     pub fn new() -> Self {
         Self {
+            active_screen: Screen::Dashboard,
             status: StatusSnapshot::default(),
             auth_state: AuthState::NotAuthenticated,
             crypto_state: CryptoState::NotSetup,

@@ -26,22 +26,22 @@ pub fn render(frame: &mut Frame, state: &TuiState, area: Rect) {
     match &state.crypto_state {
         CryptoState::Started => {
             buttons.push(Span::styled(" [", theme::muted_text()));
-            buttons.push(Span::styled("l", theme::key_hint_style()));
+            buttons.push(Span::styled("^L", theme::key_hint_style()));
             buttons.push(Span::styled(" Lock] ", theme::muted_text()));
         }
         CryptoState::SetupComplete | CryptoState::Stopped => {
             buttons.push(Span::styled(" [", theme::muted_text()));
-            buttons.push(Span::styled("u", theme::key_hint_style()));
+            buttons.push(Span::styled("^L", theme::key_hint_style()));
             buttons.push(Span::styled(" Unlock] ", theme::muted_text()));
         }
         CryptoState::NotSetup => {
             buttons.push(Span::styled(" [", theme::muted_text()));
-            buttons.push(Span::styled("S", theme::key_hint_style()));
+            buttons.push(Span::styled("^L", theme::key_hint_style()));
             buttons.push(Span::styled(" Setup] ", theme::muted_text()));
         }
         CryptoState::Failed(_) => {
             buttons.push(Span::styled(" [", theme::muted_text()));
-            buttons.push(Span::styled("S", theme::key_hint_style()));
+            buttons.push(Span::styled("^L", theme::key_hint_style()));
             buttons.push(Span::styled(" Setup] ", theme::muted_text()));
         }
     }
