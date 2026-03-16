@@ -16,11 +16,15 @@
 
 pub mod browser;
 pub mod cstring;
+pub mod mount;
 pub mod qrcode;
 pub mod terminal;
 
 // Re-export commonly used items from cstring module
 pub use cstring::{from_cstr_owned, from_cstr_ref, to_cstring, try_to_cstring};
+
+// Re-export mountpoint utility
+pub use mount::ensure_mountpoint;
 
 // Re-export commonly used terminal utilities
 pub use terminal::{print_boxed, print_status, StatusIndicator};

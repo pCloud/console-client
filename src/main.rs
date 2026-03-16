@@ -264,9 +264,7 @@ fn run_tui_mode(cli: Cli, env_secrets: ResolvedSecrets) -> Result<()> {
             .lock()
             .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
 
-        if !mountpoint.exists() {
-            std::fs::create_dir_all(&mountpoint).map_err(PCloudError::Io)?;
-        }
+        console_client::utils::ensure_mountpoint(&mountpoint)?;
         client_guard.set_fs_root(&mountpoint)?;
     }
 
@@ -379,14 +377,8 @@ fn run_foreground_mode(cli: Cli, env_secrets: ResolvedSecrets) -> Result<()> {
             .lock()
             .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
 
-        // Create mountpoint directory if it doesn't exist
-        if !mountpoint.exists() {
-            print_status(
-                StatusIndicator::Info,
-                &format!("Creating mountpoint: {}", mountpoint.display()),
-            );
-            std::fs::create_dir_all(&mountpoint).map_err(PCloudError::Io)?;
-        }
+        // Ensure mountpoint directory is ready (handles stale FUSE mounts)
+        console_client::utils::ensure_mountpoint(&mountpoint)?;
 
         // Set the filesystem root before starting sync
         client_guard.set_fs_root(&mountpoint)?;
@@ -923,10 +915,8 @@ fn run_daemon_mode(cli: Cli, env_secrets: ResolvedSecrets) -> Result<()> {
             .lock()
             .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
 
-        // Create mountpoint directory if it doesn't exist
-        if !mountpoint.exists() {
-            std::fs::create_dir_all(&mountpoint).map_err(PCloudError::Io)?;
-        }
+        // Ensure mountpoint directory is ready (handles stale FUSE mounts)
+        console_client::utils::ensure_mountpoint(&mountpoint)?;
 
         // Set the filesystem root before starting sync
         client_guard.set_fs_root(&mountpoint)?;
