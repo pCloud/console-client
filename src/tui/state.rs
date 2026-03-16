@@ -168,6 +168,12 @@ pub struct TuiState {
     pub password_stash: Option<secrecy::SecretString>,
     pub status_message: Option<(String, StatusMessageKind)>,
     pub status_message_at: Option<Instant>,
+    /// Vertical scroll offset for screens with overflow (e.g. QR code).
+    pub scroll_offset: u16,
+    /// One-shot flag: clear the frame buffer on the next render cycle.
+    /// Set when switching between screens that have incompatible layouts
+    /// (e.g. auth QR code → dashboard) to prevent stale cell artifacts.
+    pub needs_clear: bool,
 }
 
 impl TuiState {
@@ -191,6 +197,8 @@ impl TuiState {
             password_stash: None,
             status_message: None,
             status_message_at: None,
+            scroll_offset: 0,
+            needs_clear: false,
         }
     }
 

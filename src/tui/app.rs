@@ -56,6 +56,7 @@ impl App {
                         self.state.input_mode,
                         InputMode::AuthMenu | InputMode::AuthToken | InputMode::AuthWebWaiting(_)
                     ) {
+                        self.state.needs_clear = true;
                         self.state.input_mode = InputMode::Normal;
                     }
                 }
@@ -247,6 +248,7 @@ impl App {
     fn handle_auth_waiting_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Esc => {
+                self.state.scroll_offset = 0;
                 self.state.input_mode = InputMode::AuthMenu;
             }
             KeyCode::Char('q') | KeyCode::Char('Q') => {
@@ -254,6 +256,12 @@ impl App {
             }
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.state.should_quit = true;
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.state.scroll_offset = self.state.scroll_offset.saturating_sub(1);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.state.scroll_offset = self.state.scroll_offset.saturating_add(1);
             }
             _ => {}
         }
@@ -551,6 +559,7 @@ impl App {
             if matches!(self.state.input_mode, InputMode::AuthWebWaiting(_))
                 && self.state.auth_state == AuthState::Authenticated
             {
+                self.state.needs_clear = true;
                 self.state.input_mode = InputMode::Normal;
                 self.state.set_status_message(
                     "Authentication successful!".into(),

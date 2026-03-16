@@ -117,7 +117,12 @@ fn render_token_input(frame: &mut Frame, state: &TuiState, area: ratatui::layout
     frame.render_widget(paragraph, area);
 }
 
-fn render_web_waiting(frame: &mut Frame, state: &TuiState, area: ratatui::layout::Rect, url: &str) {
+fn render_web_waiting(
+    frame: &mut Frame,
+    state: &TuiState,
+    area: ratatui::layout::Rect,
+    url: &str,
+) {
     let mut lines = vec![
         Line::from(""),
         Line::from(Span::styled("Web Login", theme::title_style())),
@@ -165,6 +170,7 @@ fn render_web_waiting(frame: &mut Frame, state: &TuiState, area: ratatui::layout
     let paragraph = Paragraph::new(lines)
         .block(block)
         .alignment(Alignment::Center)
-        .wrap(Wrap { trim: false });
+        .wrap(Wrap { trim: false })
+        .scroll((state.scroll_offset, 0));
     frame.render_widget(paragraph, area);
 }

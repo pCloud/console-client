@@ -38,6 +38,8 @@ pub fn render(frame: &mut Frame, state: &TuiState, area: Rect) {
             vec![
                 Span::styled(" Esc ", theme::key_hint_style()),
                 Span::styled("Cancel  ", theme::key_desc_style()),
+                Span::styled("↑↓ ", theme::key_hint_style()),
+                Span::styled("Scroll  ", theme::key_desc_style()),
                 Span::styled(
                     "Waiting for browser authentication...",
                     theme::muted_text(),

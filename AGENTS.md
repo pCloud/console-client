@@ -163,8 +163,8 @@ Runtime dependencies vary by format but cover: FUSE, SQLite, OpenSSL/TLS, zlib, 
 ### Running Tests
 
 ```bash
-# Run all tests
-cargo test
+# Run all tests (in Claude Code sandbox, set TMPDIR to a writable path)
+TMPDIR=/tmp/claude-1000/rust-tmp cargo test
 
 # Run unit tests only (tests inside src/)
 cargo test --lib

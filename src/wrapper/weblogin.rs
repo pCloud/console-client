@@ -76,10 +76,10 @@ impl Default for WebLoginConfig {
             device_id: generate_device_id(),
             os_version: get_os_version(),
             app_version: env!("CARGO_PKG_VERSION").to_string(),
-            client_id: "pcloud-console".to_string(),
+            client_id: "pcloud-cli".to_string(),
             lang: get_system_language(),
-            theme: "dark".to_string(),
-            os: 3, // Desktop generic
+            theme: "light".to_string(),
+            os: 7, // Console client
         }
     }
 }

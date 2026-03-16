@@ -116,10 +116,12 @@ fn is_tty() -> bool {
 /// ```
 pub fn generate_qr_code(data: &str) -> Result<String, QrCodeError> {
     use qrcode::render::unicode::Dense1x2;
-    use qrcode::QrCode;
+    use qrcode::{EcLevel, QrCode};
 
-    let code =
-        QrCode::new(data.as_bytes()).map_err(|e| QrCodeError::EncodingError(e.to_string()))?;
+    // Use low error-correction level for a smaller QR code.
+    // This is fine for on-screen display where "damage" isn't a concern.
+    let code = QrCode::with_error_correction_level(data.as_bytes(), EcLevel::L)
+        .map_err(|e| QrCodeError::EncodingError(e.to_string()))?;
 
     let image = code
         .render::<Dense1x2>()

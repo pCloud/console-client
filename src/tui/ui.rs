@@ -1,4 +1,5 @@
 use ratatui::layout::{Constraint, Layout};
+use ratatui::widgets::Clear;
 use ratatui::Frame;
 
 use super::app::App;
@@ -8,6 +9,13 @@ use super::widgets;
 /// Top-level render function.
 pub fn render(frame: &mut Frame, app: &mut App) {
     let state = &mut app.state;
+
+    // One-shot clear: wipe stale cells after a layout-incompatible screen
+    // transition (e.g. auth QR code → dashboard).
+    if state.needs_clear {
+        frame.render_widget(Clear, frame.area());
+        state.needs_clear = false;
+    }
 
     // Check if we need to show auth screen
     if matches!(
