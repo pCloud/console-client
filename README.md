@@ -11,7 +11,7 @@ A command-line client for pCloud in Rust with FFI bindings to the [pclsync](http
 
 Pre-built binaries and packages along with installation instructions are available on the [Releases](https://github.com/pCloud/console-client/releases/latest) page for:
 
-- **Linux** — x86_64, ARM 64-bit, ARM 32-bit (`.deb`, `.rpm`, and standalone binaries)
+- **Linux** — x86_64, ARM 64-bit, ARM 32-bit (`.deb`, `.rpm`, and standalone binaries; ARM 32-bit `.rpm` not available as Fedora dropped armhfp support)
 - **macOS** — Universal binary (Apple Silicon & Intel)
 - **Arch Linux** — PKGBUILD included in the repository at [`pkg/arch/PKGBUILD`](pkg/arch/PKGBUILD)
 

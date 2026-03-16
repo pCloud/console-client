@@ -324,6 +324,14 @@ jobs:
             fi
           done
 
+          # GitHub replaces ~ with . in release asset names, so rename
+          # .deb files proactively to keep URLs predictable.
+          # (cargo-deb uses ~ for Debian pre-release versions, e.g. 3.0.0~preview-04)
+          for f in release/*~*.deb; do
+            [ -e "$f" ] || continue
+            mv "$f" "$(echo "$f" | tr '~' '.')"
+          done
+
           # macOS universal binary
           if [ -d "artifacts/binary-macos-universal" ]; then
             cp "artifacts/binary-macos-universal/pcloud-macos-universal" "release/pcloud-macos-universal" 2>/dev/null || true
@@ -339,7 +347,7 @@ jobs:
           echo "deb_armhf=$(basename release/*_armhf.deb 2>/dev/null || echo '')" >> "$GITHUB_OUTPUT"
           echo "rpm_x86_64=$(basename release/*.x86_64.rpm 2>/dev/null || echo '')" >> "$GITHUB_OUTPUT"
           echo "rpm_aarch64=$(basename release/*.aarch64.rpm 2>/dev/null || echo '')" >> "$GITHUB_OUTPUT"
-          echo "rpm_armv7hl=$(basename release/*.armv7hl.rpm 2>/dev/null || echo '')" >> "$GITHUB_OUTPUT"
+          echo "rpm_armv7=$(basename release/*.armv7.rpm 2>/dev/null || echo '')" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -348,8 +356,9 @@ jobs:
           generate_release_notes: ${{ steps.tag-message.outputs.body == '' }}
           files: release/*
           body: |
-            ${{ steps.tag-message.outputs.body != '' && format('## What''s Changed\n\n{0}\n\n', steps.tag-message.outputs.body) || '' }}## Installation
-
+            ${{ steps.tag-message.outputs.body != '' && format('## What''s Changed\n\n{0}\n\n', steps.tag-message.outputs.body) || '' }}
+            
+            ## Installation
             ---
 
             ### Linux
@@ -378,7 +387,7 @@ jobs:
             chmod +x pcloud && mv pcloud ~/.local/bin/
             ```
 
-            > **Runtime dependencies for binary installs:** The binary requires FUSE 2 (`libfuse.so.2`) and OpenSSL 3 to be installed on your system. See the [Dependencies](#dependencies) section below.
+            > **Runtime dependencies for binary installs:** The binary requires FUSE 2 (`libfuse.so.2`), SQLite 3, and OpenSSL 3 to be installed on your system. See the [Dependencies](#dependencies) section below.
 
             #### Packages
 
@@ -398,7 +407,6 @@ jobs:
             |---|---|
             | x86_64 | `curl -L -O https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ steps.pkgnames.outputs.rpm_x86_64 }} && sudo rpm -i ${{ steps.pkgnames.outputs.rpm_x86_64 }}` |
             | ARM 64-bit | `curl -L -O https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ steps.pkgnames.outputs.rpm_aarch64 }} && sudo rpm -i ${{ steps.pkgnames.outputs.rpm_aarch64 }}` |
-            | ARM 32-bit | `curl -L -O https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ steps.pkgnames.outputs.rpm_armv7hl }} && sudo rpm -i ${{ steps.pkgnames.outputs.rpm_armv7hl }}` |
 
             ##### Arch Linux (build from source)
 
@@ -432,26 +440,26 @@ jobs:
 
             ### Dependencies
 
-            The binary and packages require **FUSE 2** (`libfuse.so.2`) and **OpenSSL 3** at runtime. Package installs (`.deb`, `.rpm`) handle this automatically; for binary installs or if dependencies are missing, install them manually:
+            The binary and packages require **FUSE 2** (`libfuse.so.2`), **SQLite 3**, and **OpenSSL 3** at runtime. Package installs (`.deb`, `.rpm`) handle this automatically; for binary installs or if dependencies are missing, install them manually:
 
             #### Debian / Ubuntu
 
             ```bash
             # Ubuntu 24.04+, Debian 13+ (note the t64 suffix for 64-bit time compatibility)
-            sudo apt update && sudo apt install -y libfuse2t64 openssl
+            sudo apt update && sudo apt install -y libfuse2t64 libsqlite3-0 openssl
 
             # Ubuntu 22.04, Debian 11/12
-            sudo apt update && sudo apt install -y libfuse2 openssl
+            sudo apt update && sudo apt install -y libfuse2 libsqlite3-0 openssl
             ```
 
             #### Fedora / RHEL / CentOS
 
             ```bash
             # Fedora 36–43, RHEL 9/10
-            sudo dnf install -y fuse-libs openssl
+            sudo dnf install -y fuse-libs sqlite-libs openssl
 
             # RHEL 8 / CentOS 8 (ships OpenSSL 1.1.1 by default — also install OpenSSL 3)
-            sudo yum install -y fuse-libs openssl openssl3
+            sudo yum install -y fuse-libs sqlite-libs openssl openssl3
             ```
 
             > **Note on Fedora 40+:** The `fuse-libs` package providing `libfuse.so.2` has been removed from the default repos. You may need to install it from a Fedora 39 or older package, or use FUSE 3 with a compatibility layer.
@@ -459,7 +467,7 @@ jobs:
             #### Arch Linux
 
             ```bash
-            sudo pacman -S fuse2 openssl
+            sudo pacman -S fuse2 sqlite openssl
             ```
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
