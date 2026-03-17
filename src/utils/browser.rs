@@ -9,7 +9,7 @@
 //! use console_client::utils::browser::{open_url, has_display};
 //!
 //! if has_display() {
-//!     match open_url("https://example.com") {
+//!     match open_url("https://example.com", false) {
 //!         Ok(true) => println!("Browser opened!"),
 //!         Ok(false) => println!("Could not open browser"),
 //!         Err(e) => eprintln!("Error: {}", e),
@@ -19,7 +19,7 @@
 //! }
 //! ```
 
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 /// Check if a graphical display is available.
 ///
@@ -100,18 +100,22 @@ pub fn has_display() -> bool {
 /// - `Ok(false)` if no suitable command was found
 /// - `Err` if an error occurred during execution
 ///
+/// When `quiet` is true, child process stdout/stderr are redirected to
+/// `/dev/null`. Use this from TUI mode to prevent browser commands
+/// (e.g. `xdg-open`) from corrupting the alternate screen.
+///
 /// # Example
 ///
 /// ```ignore
 /// use console_client::utils::browser::open_url;
 ///
-/// match open_url("https://pcloud.com") {
+/// match open_url("https://pcloud.com", false) {
 ///     Ok(true) => println!("Browser opened successfully"),
 ///     Ok(false) => println!("Could not find a browser to open"),
 ///     Err(e) => eprintln!("Error opening browser: {}", e),
 /// }
 /// ```
-pub fn open_url(url: &str) -> Result<bool, std::io::Error> {
+pub fn open_url(url: &str, quiet: bool) -> Result<bool, std::io::Error> {
     // Validate URL (basic check)
     if !url.starts_with("http://") && !url.starts_with("https://") {
         return Err(std::io::Error::new(
@@ -123,7 +127,7 @@ pub fn open_url(url: &str) -> Result<bool, std::io::Error> {
     #[cfg(target_os = "linux")]
     {
         // Try xdg-open first (most common)
-        if try_open_with("xdg-open", &[url])? {
+        if try_open_with("xdg-open", &[url], quiet)? {
             return Ok(true);
         }
 
@@ -136,7 +140,7 @@ pub fn open_url(url: &str) -> Result<bool, std::io::Error> {
             "chromium",
             "google-chrome",
         ] {
-            if try_open_with(cmd, &[url])? {
+            if try_open_with(cmd, &[url], quiet)? {
                 return Ok(true);
             }
         }
@@ -146,12 +150,12 @@ pub fn open_url(url: &str) -> Result<bool, std::io::Error> {
 
     #[cfg(target_os = "macos")]
     {
-        try_open_with("open", &[url])
+        try_open_with("open", &[url], quiet)
     }
 
     #[cfg(target_os = "windows")]
     {
-        try_open_with("cmd", &["/c", "start", "", url])
+        try_open_with("cmd", &["/c", "start", "", url], quiet)
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
@@ -162,8 +166,14 @@ pub fn open_url(url: &str) -> Result<bool, std::io::Error> {
 }
 
 /// Try to open a URL with a specific command.
-fn try_open_with(cmd: &str, args: &[&str]) -> Result<bool, std::io::Error> {
-    match Command::new(cmd).args(args).spawn() {
+fn try_open_with(cmd: &str, args: &[&str], quiet: bool) -> Result<bool, std::io::Error> {
+    let mut command = Command::new(cmd);
+    command.args(args);
+    if quiet {
+        command.stdout(Stdio::null());
+        command.stderr(Stdio::null());
+    }
+    match command.spawn() {
         Ok(mut child) => {
             // Don't wait for the browser process to complete
             // Just check if it started successfully
@@ -188,8 +198,8 @@ fn try_open_with(cmd: &str, args: &[&str]) -> Result<bool, std::io::Error> {
 ///
 /// * `url` - The URL to open
 /// * `browser` - The browser command to use (e.g., "firefox", "chrome")
-pub fn open_url_with(url: &str, browser: &str) -> Result<bool, std::io::Error> {
-    try_open_with(browser, &[url])
+pub fn open_url_with(url: &str, browser: &str, quiet: bool) -> Result<bool, std::io::Error> {
+    try_open_with(browser, &[url], quiet)
 }
 
 #[cfg(test)]
@@ -204,13 +214,13 @@ mod tests {
 
     #[test]
     fn test_open_url_invalid_url() {
-        let result = open_url("not-a-url");
+        let result = open_url("not-a-url", false);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_open_url_ftp_url() {
-        let result = open_url("ftp://example.com");
+        let result = open_url("ftp://example.com", false);
         assert!(result.is_err());
     }
 

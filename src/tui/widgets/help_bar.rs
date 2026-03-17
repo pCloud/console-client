@@ -67,13 +67,13 @@ pub fn render(frame: &mut Frame, state: &TuiState, area: Rect) {
                     Span::styled("Switch  ", theme::key_desc_style()),
                     Span::styled("\u{2191}\u{2193} ", theme::key_hint_style()),
                     Span::styled("Scroll  ", theme::key_desc_style()),
-                    Span::styled("^L ", theme::key_hint_style()),
+                    Span::styled("Ctrl+L ", theme::key_hint_style()),
                     Span::styled("Crypto  ", theme::key_desc_style()),
-                    Span::styled("^U ", theme::key_hint_style()),
+                    Span::styled("Ctrl+U ", theme::key_hint_style()),
                     Span::styled("Unlink", theme::key_desc_style()),
                 ]
             }
-            Screen::Help | Screen::About => {
+            Screen::Help => {
                 vec![
                     Span::styled(" q ", theme::key_hint_style()),
                     Span::styled("Quit  ", theme::key_desc_style()),
@@ -83,6 +83,18 @@ pub fn render(frame: &mut Frame, state: &TuiState, area: Rect) {
                     Span::styled("Help  ", theme::key_desc_style()),
                     Span::styled("3 ", theme::key_hint_style()),
                     Span::styled("About", theme::key_desc_style()),
+                ]
+            }
+            Screen::About => {
+                vec![
+                    Span::styled(" q ", theme::key_hint_style()),
+                    Span::styled("Quit  ", theme::key_desc_style()),
+                    Span::styled("1 ", theme::key_hint_style()),
+                    Span::styled("Dashboard  ", theme::key_desc_style()),
+                    Span::styled("Tab ", theme::key_hint_style()),
+                    Span::styled("Navigate  ", theme::key_desc_style()),
+                    Span::styled("Enter ", theme::key_hint_style()),
+                    Span::styled("Open link", theme::key_desc_style()),
                 ]
             }
         },

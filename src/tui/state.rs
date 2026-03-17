@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::time::Instant;
 
 use ratatui::widgets::ListState;
@@ -86,7 +87,6 @@ pub enum Screen {
 /// Which panel currently has focus.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Panel {
-    Mount,
     Crypto,
     Transfers,
     ActivityLog,
@@ -95,19 +95,35 @@ pub enum Panel {
 impl Panel {
     pub fn next(&self) -> Self {
         match self {
-            Panel::Mount => Panel::Crypto,
             Panel::Crypto => Panel::Transfers,
             Panel::Transfers => Panel::ActivityLog,
-            Panel::ActivityLog => Panel::Mount,
+            Panel::ActivityLog => Panel::Crypto,
         }
     }
 
     pub fn prev(&self) -> Self {
         match self {
-            Panel::Mount => Panel::ActivityLog,
-            Panel::Crypto => Panel::Mount,
+            Panel::Crypto => Panel::ActivityLog,
             Panel::Transfers => Panel::Crypto,
             Panel::ActivityLog => Panel::Transfers,
+        }
+    }
+}
+
+/// Which element has focus on the About screen.
+#[derive(Clone, Debug, PartialEq)]
+pub enum AboutFocus {
+    ClientBuild,
+    PclsyncBuild,
+    LicenseLink,
+}
+
+impl AboutFocus {
+    pub fn next(&self) -> Self {
+        match self {
+            AboutFocus::ClientBuild => AboutFocus::PclsyncBuild,
+            AboutFocus::PclsyncBuild => AboutFocus::LicenseLink,
+            AboutFocus::LicenseLink => AboutFocus::ClientBuild,
         }
     }
 }
@@ -159,7 +175,9 @@ pub struct TuiState {
     pub account_email: Option<String>,
     pub quota_used: u64,
     pub quota_total: u64,
-    pub activity_log: Vec<ActivityEntry>,
+    pub account_location: Option<String>,
+    pub crypto_folder_path: Option<String>,
+    pub activity_log: VecDeque<ActivityEntry>,
     pub active_panel: Panel,
     pub should_quit: bool,
     pub log_state: ListState,
@@ -168,6 +186,7 @@ pub struct TuiState {
     pub password_stash: Option<secrecy::SecretString>,
     pub status_message: Option<(String, StatusMessageKind)>,
     pub status_message_at: Option<Instant>,
+    pub about_focus: Option<AboutFocus>,
     /// Vertical scroll offset for screens with overflow (e.g. QR code).
     pub scroll_offset: u16,
     /// One-shot flag: clear the frame buffer on the next render cycle.
@@ -188,13 +207,16 @@ impl TuiState {
             account_email: None,
             quota_used: 0,
             quota_total: 0,
-            activity_log: Vec::new(),
-            active_panel: Panel::ActivityLog,
+            account_location: None,
+            crypto_folder_path: None,
+            activity_log: VecDeque::new(),
+            active_panel: Panel::Crypto,
             should_quit: false,
             log_state: ListState::default(),
             input_mode: InputMode::Normal,
             input_buffer: String::new(),
             password_stash: None,
+            about_focus: None,
             status_message: None,
             status_message_at: None,
             scroll_offset: 0,
@@ -204,9 +226,9 @@ impl TuiState {
 
     /// Add an activity log entry, trimming old ones.
     pub fn push_activity(&mut self, entry: ActivityEntry) {
-        self.activity_log.push(entry);
+        self.activity_log.push_back(entry);
         if self.activity_log.len() > MAX_ACTIVITY_LOG {
-            self.activity_log.remove(0);
+            self.activity_log.pop_front();
         }
         // Auto-scroll to bottom
         let len = self.activity_log.len();

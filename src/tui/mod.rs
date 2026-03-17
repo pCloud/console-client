@@ -12,7 +12,8 @@ use crate::ffi::types::{
     PEVENT_FILE_DOWNLOAD_FINISHED, PEVENT_FILE_DOWNLOAD_STARTED, PEVENT_FILE_UPLOAD_FAILED,
     PEVENT_FILE_UPLOAD_FINISHED, PEVENT_FILE_UPLOAD_STARTED, PEVENT_LOCAL_FILE_DELETED,
     PEVENT_LOCAL_FOLDER_CREATED, PEVENT_LOCAL_FOLDER_DELETED, PEVENT_REMOTE_FILE_DELETED,
-    PEVENT_REMOTE_FOLDER_CREATED, PEVENT_REMOTE_FOLDER_DELETED,
+    PEVENT_REMOTE_FOLDER_CREATED, PEVENT_REMOTE_FOLDER_DELETED, PEVENT_USERINFO_CHANGED,
+    PEVENT_USEDQUOTA_CHANGED, PEVENT_FIRST_SHARE_EVENT,
 };
 use crate::wrapper::PCloudClient;
 use crate::Result;
@@ -46,11 +47,12 @@ pub fn run(client: Arc<Mutex<PCloudClient>>, _cli: &Cli) -> Result<()> {
     let event_tx = tx.clone();
     register_event_callback(
         move |event_type: psync_eventtype_t, event_data: psync_eventdata_t| {
-            let (description, is_error) = describe_event(event_type, event_data);
-            let _ = event_tx.send(TuiEvent::FileEvent {
-                description,
-                is_error,
-            });
+            if let Some((description, is_error)) = describe_event(event_type, event_data) {
+                let _ = event_tx.send(TuiEvent::FileEvent {
+                    description,
+                    is_error,
+                });
+            }
         },
     );
 
@@ -127,7 +129,20 @@ pub fn run(client: Arc<Mutex<PCloudClient>>, _cli: &Cli) -> Result<()> {
 }
 
 /// Convert a C library event into a human-readable description.
-fn describe_event(event_type: psync_eventtype_t, event_data: psync_eventdata_t) -> (String, bool) {
+///
+/// Returns `None` for metadata events (user info, quota changes, shares)
+/// that have no file data and should not appear in the activity log.
+fn describe_event(
+    event_type: psync_eventtype_t,
+    event_data: psync_eventdata_t,
+) -> Option<(String, bool)> {
+    // Metadata events: no file data pointer, skip them
+    match event_type {
+        PEVENT_USERINFO_CHANGED | PEVENT_USEDQUOTA_CHANGED => return None,
+        e if e >= PEVENT_FIRST_SHARE_EVENT => return None,
+        _ => {}
+    }
+
     let path = unsafe {
         let file_ptr = event_data.file;
         if !file_ptr.is_null() {
@@ -145,7 +160,8 @@ fn describe_event(event_type: psync_eventtype_t, event_data: psync_eventdata_t) 
                 }
             }
         } else {
-            "unknown".to_string()
+            // Unknown event type with no file data -- skip it
+            return None;
         }
     };
 
@@ -165,5 +181,5 @@ fn describe_event(event_type: psync_eventtype_t, event_data: psync_eventdata_t) 
         _ => ("Event", false),
     };
 
-    (format!("{}: {}", prefix, path), is_error)
+    Some((format!("{}: {}", prefix, path), is_error))
 }

@@ -19,6 +19,11 @@ pub fn render(frame: &mut Frame, state: &TuiState, area: Rect) {
     };
 
     let email_str = state.account_email.as_deref().unwrap_or("--");
+    let location_suffix = state
+        .account_location
+        .as_ref()
+        .map(|loc| format!(" ({})", loc))
+        .unwrap_or_default();
     let storage_str = if state.quota_total > 0 {
         let pct = (state.quota_used as f64 / state.quota_total as f64 * 100.0) as u64;
         format!(
@@ -47,7 +52,7 @@ pub fn render(frame: &mut Frame, state: &TuiState, area: Rect) {
         Span::styled(&state.status.status_str, status_style),
         Span::raw("          "),
         Span::styled("Account: ", theme::muted_text()),
-        Span::styled(email_str, theme::normal_text()),
+        Span::styled(format!("{}{}", email_str, location_suffix), theme::normal_text()),
         status_msg_span,
     ]);
 
@@ -57,11 +62,25 @@ pub fn render(frame: &mut Frame, state: &TuiState, area: Rect) {
         Span::styled(storage_str, theme::normal_text()),
     ]);
 
+    let (mount_icon, mount_icon_style, mount_text) = if state.fs_mounted {
+        let mp = state.mountpoint.as_deref().unwrap_or("unknown");
+        ("V", theme::success_text(), format!("Mounted at {}", mp))
+    } else {
+        ("X", theme::error_text(), "Not mounted".to_string())
+    };
+
+    let line3 = Line::from(vec![
+        Span::styled("  Mount:  ", theme::muted_text()),
+        Span::styled(mount_icon, mount_icon_style),
+        Span::raw(" "),
+        Span::styled(mount_text, theme::normal_text()),
+    ]);
+
     let version = env!("CARGO_PKG_VERSION");
     let block = Block::default()
         .borders(Borders::ALL)
         .title(Span::styled(
-            " pCloud Console Client ",
+            " pCloud ",
             theme::title_style(),
         ))
         .title_alignment(Alignment::Left)
@@ -74,7 +93,7 @@ pub fn render(frame: &mut Frame, state: &TuiState, area: Rect) {
             .alignment(Alignment::Right),
         );
 
-    let paragraph = Paragraph::new(vec![line1, line2]).block(block);
+    let paragraph = Paragraph::new(vec![line1, line2, line3]).block(block);
     frame.render_widget(paragraph, area);
 }
 

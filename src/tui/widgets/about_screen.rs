@@ -1,15 +1,23 @@
 use ratatui::layout::Rect;
+use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
+use crate::tui::state::{AboutFocus, TuiState};
 use crate::tui::theme;
 
-pub fn render(frame: &mut Frame, area: Rect) {
+pub fn render(frame: &mut Frame, state: &TuiState, area: Rect) {
     let version = env!("PCLOUD_VERSION");
     let client_commit = option_env!("PCLOUD_GIT_COMMIT_SHORT").unwrap_or("unknown");
     let pclsync_ver = option_env!("PSYNC_LIB_VERSION").unwrap_or("unknown");
     let pclsync_commit = option_env!("PCLSYNC_GIT_COMMIT_SHORT").unwrap_or("unknown");
+
+    let focus = &state.about_focus;
+
+    let client_build_style = focusable_style(focus, &AboutFocus::ClientBuild);
+    let pclsync_build_style = focusable_style(focus, &AboutFocus::PclsyncBuild);
+    let license_link_style = focusable_style(focus, &AboutFocus::LicenseLink);
 
     let lines = vec![
         Line::from(""),
@@ -24,7 +32,7 @@ pub fn render(frame: &mut Frame, area: Rect) {
         ]),
         Line::from(vec![
             Span::styled("  Build             ", theme::muted_text()),
-            Span::styled(client_commit, theme::status_syncing()),
+            Span::styled(client_commit, client_build_style),
         ]),
         Line::from(""),
         Line::from(vec![
@@ -33,7 +41,7 @@ pub fn render(frame: &mut Frame, area: Rect) {
         ]),
         Line::from(vec![
             Span::styled("  Build             ", theme::muted_text()),
-            Span::styled(pclsync_commit, theme::status_syncing()),
+            Span::styled(pclsync_commit, pclsync_build_style),
         ]),
         Line::from(""),
         Line::from(vec![
@@ -49,18 +57,31 @@ pub fn render(frame: &mut Frame, area: Rect) {
         ]),
         Line::from(vec![
             Span::styled("  License           ", theme::muted_text()),
-            Span::styled("BSD-3-Clause", theme::normal_text()),
+            Span::styled("BSD-3-Clause, details ", theme::normal_text()),
+            Span::styled("here", license_link_style),
         ]),
     ];
 
     let block = Block::default()
         .borders(Borders::ALL)
         .title(Span::styled(
-            " About \u{2500}\u{2500} pCloud Console Client ",
+            " About \u{2500}\u{2500} pCloud CLI ",
             theme::title_style(),
         ))
         .border_style(theme::focused_border());
 
     let paragraph = Paragraph::new(lines).block(block);
     frame.render_widget(paragraph, area);
+}
+
+/// Return the style for a focusable element: highlighted if focused, underlined link otherwise.
+fn focusable_style(
+    current_focus: &Option<AboutFocus>,
+    target: &AboutFocus,
+) -> ratatui::style::Style {
+    if current_focus.as_ref() == Some(target) {
+        theme::status_syncing().add_modifier(Modifier::UNDERLINED | Modifier::REVERSED)
+    } else {
+        theme::status_syncing().add_modifier(Modifier::UNDERLINED)
+    }
 }

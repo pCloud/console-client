@@ -39,7 +39,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     match state.active_screen {
         Screen::Dashboard => render_dashboard(frame, app, outer[1]),
         Screen::Help => widgets::help_screen::render(frame, outer[1]),
-        Screen::About => widgets::about_screen::render(frame, outer[1]),
+        Screen::About => widgets::about_screen::render(frame, &app.state, outer[1]),
     }
 
     widgets::help_bar::render(frame, &app.state, outer[2]);
@@ -62,8 +62,7 @@ fn render_dashboard(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rec
     let state = &mut app.state;
 
     let chunks = Layout::vertical([
-        Constraint::Length(4), // Header (2 content lines + 2 borders)
-        Constraint::Length(3), // Mount
+        Constraint::Length(5), // Header (3 content lines + 2 borders)
         Constraint::Length(3), // Crypto
         Constraint::Length(4), // Transfers
         Constraint::Fill(1),  // Activity log
@@ -71,8 +70,7 @@ fn render_dashboard(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rec
     .split(area);
 
     widgets::header::render(frame, state, chunks[0]);
-    widgets::mount_panel::render(frame, state, chunks[1]);
-    widgets::crypto_panel::render(frame, state, chunks[2]);
-    widgets::transfer::render(frame, state, chunks[3]);
-    widgets::activity_log::render(frame, state, chunks[4]);
+    widgets::crypto_panel::render(frame, state, chunks[1]);
+    widgets::transfer::render(frame, state, chunks[2]);
+    widgets::activity_log::render(frame, state, chunks[3]);
 }

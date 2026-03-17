@@ -11,7 +11,7 @@ use crate::wrapper::{AuthState, CryptoState, PCloudClient, WebLoginConfig};
 
 use super::event_types::TuiEvent;
 use super::state::{
-    ActivityEntry, CryptoAction, InputMode, Screen, StatusMessageKind, TuiState,
+    AboutFocus, ActivityEntry, CryptoAction, InputMode, Screen, StatusMessageKind, TuiState,
 };
 
 /// The main TUI application.
@@ -128,17 +128,60 @@ impl App {
             }
             KeyCode::Char('1') => {
                 self.state.active_screen = Screen::Dashboard;
+                self.state.about_focus = None;
                 return;
             }
             KeyCode::Char('2') => {
                 self.state.active_screen = Screen::Help;
+                self.state.about_focus = None;
                 return;
             }
             KeyCode::Char('3') => {
                 self.state.active_screen = Screen::About;
+                self.state.about_focus = Some(AboutFocus::ClientBuild);
                 return;
             }
             _ => {}
+        }
+
+        // About screen keys
+        if self.state.active_screen == Screen::About {
+            match key.code {
+                KeyCode::Tab => {
+                    self.state.about_focus = Some(
+                        self.state
+                            .about_focus
+                            .as_ref()
+                            .map(|f| f.next())
+                            .unwrap_or(AboutFocus::ClientBuild),
+                    );
+                }
+                KeyCode::Enter => {
+                    if let Some(ref focus) = self.state.about_focus {
+                        let client_commit =
+                            option_env!("PCLOUD_GIT_COMMIT").unwrap_or("main");
+                        let pclsync_commit =
+                            option_env!("PCLSYNC_GIT_COMMIT").unwrap_or("main");
+                        let url = match focus {
+                            AboutFocus::ClientBuild => format!(
+                                "https://github.com/pCloud/console-client/commit/{}",
+                                client_commit
+                            ),
+                            AboutFocus::PclsyncBuild => format!(
+                                "https://github.com/pCloud/pclsync/commit/{}",
+                                pclsync_commit
+                            ),
+                            AboutFocus::LicenseLink => format!(
+                                "https://github.com/pCloud/console-client/blob/{}/LICENSE",
+                                client_commit
+                            ),
+                        };
+                        let _ = crate::utils::browser::open_url(&url, true);
+                    }
+                }
+                _ => {}
+            }
+            return;
         }
 
         // Dashboard-only keys
@@ -459,7 +502,7 @@ impl App {
                 self.state.input_mode = InputMode::AuthWebWaiting(url.clone());
 
                 // Try to open browser
-                let _ = crate::utils::browser::open_url(&url);
+                let _ = crate::utils::browser::open_url(&url, true);
 
                 // Spawn background thread for waiting
                 let request_id = session.request_id.clone();
@@ -555,6 +598,22 @@ impl App {
             self.state.quota_used = used;
             self.state.quota_total = total;
 
+            // Get account location
+            self.state.account_location = get_location();
+
+            // Get crypto folder path
+            if guard.is_crypto_started() && guard.is_mounted() {
+                if self.state.crypto_folder_path.is_none() {
+                    if let Some(folder_id) = guard.get_crypto_folder_id() {
+                        self.state.crypto_folder_path = guard
+                            .get_fs_path_by_folder_id(folder_id)
+                            .map(|p| p.display().to_string());
+                    }
+                }
+            } else {
+                self.state.crypto_folder_path = None;
+            }
+
             // Check if auth completed while in web waiting mode
             if matches!(self.state.input_mode, InputMode::AuthWebWaiting(_))
                 && self.state.auth_state == AuthState::Authenticated
@@ -567,6 +626,20 @@ impl App {
                 );
             }
         }
+    }
+}
+
+/// Get account location label from the C library settings DB.
+fn get_location() -> Option<String> {
+    let loc_id = unsafe {
+        let key = std::ffi::CString::new("locationid").unwrap();
+        raw::psync_get_uint_value(key.as_ptr())
+    };
+    match loc_id {
+        0 => None,
+        1 => Some("US".to_string()),
+        2 => Some("EU".to_string()),
+        other => Some(format!("Region {}", other)),
     }
 }
 

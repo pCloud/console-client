@@ -6,7 +6,7 @@ pub const SUCCESS: Color = Color::Green;
 pub const ERROR: Color = Color::Red;
 pub const WARNING: Color = Color::Yellow;
 pub const MUTED: Color = Color::DarkGray;
-pub const TEXT: Color = Color::White;
+pub const TEXT: Color = Color::Gray;
 pub const HIGHLIGHT_BG: Color = Color::DarkGray;
 
 // Styles

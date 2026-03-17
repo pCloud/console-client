@@ -15,10 +15,18 @@ pub fn render(frame: &mut Frame, state: &TuiState, area: Rect) {
     };
 
     let (icon, icon_style, status_text) = match &state.crypto_state {
-        CryptoState::NotSetup => ("o", theme::muted_text(), "Not set up"),
-        CryptoState::SetupComplete | CryptoState::Stopped => ("X", theme::error_text(), "Locked"),
-        CryptoState::Started => ("V", theme::success_text(), "Unlocked"),
-        CryptoState::Failed(_) => ("!", theme::error_text(), "Error"),
+        CryptoState::NotSetup => ("o", theme::muted_text(), "Not set up".to_string()),
+        CryptoState::SetupComplete | CryptoState::Stopped => {
+            ("X", theme::error_text(), "Locked".to_string())
+        }
+        CryptoState::Started => {
+            let text = match &state.crypto_folder_path {
+                Some(path) => format!("Unlocked - {}", path),
+                None => "Unlocked".to_string(),
+            };
+            ("V", theme::success_text(), text)
+        }
+        CryptoState::Failed(_) => ("!", theme::error_text(), "Error".to_string()),
     };
 
     // Build action buttons based on state
@@ -26,22 +34,22 @@ pub fn render(frame: &mut Frame, state: &TuiState, area: Rect) {
     match &state.crypto_state {
         CryptoState::Started => {
             buttons.push(Span::styled(" [", theme::muted_text()));
-            buttons.push(Span::styled("^L", theme::key_hint_style()));
+            buttons.push(Span::styled("Ctrl+L", theme::key_hint_style()));
             buttons.push(Span::styled(" Lock] ", theme::muted_text()));
         }
         CryptoState::SetupComplete | CryptoState::Stopped => {
             buttons.push(Span::styled(" [", theme::muted_text()));
-            buttons.push(Span::styled("^L", theme::key_hint_style()));
+            buttons.push(Span::styled("Ctrl+L", theme::key_hint_style()));
             buttons.push(Span::styled(" Unlock] ", theme::muted_text()));
         }
         CryptoState::NotSetup => {
             buttons.push(Span::styled(" [", theme::muted_text()));
-            buttons.push(Span::styled("^L", theme::key_hint_style()));
+            buttons.push(Span::styled("Ctrl+L", theme::key_hint_style()));
             buttons.push(Span::styled(" Setup] ", theme::muted_text()));
         }
         CryptoState::Failed(_) => {
             buttons.push(Span::styled(" [", theme::muted_text()));
-            buttons.push(Span::styled("^L", theme::key_hint_style()));
+            buttons.push(Span::styled("Ctrl+L", theme::key_hint_style()));
             buttons.push(Span::styled(" Setup] ", theme::muted_text()));
         }
     }
@@ -59,7 +67,7 @@ pub fn render(frame: &mut Frame, state: &TuiState, area: Rect) {
         Span::raw("  "),
         Span::styled(icon, icon_style),
         Span::raw(" "),
-        Span::styled(status_text, theme::normal_text()),
+        Span::styled(&status_text, theme::normal_text()),
         Span::raw(" ".repeat(padding)),
     ];
     spans.extend(buttons);
@@ -68,7 +76,7 @@ pub fn render(frame: &mut Frame, state: &TuiState, area: Rect) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(Span::styled(" Crypto ", theme::panel_title()))
+        .title(Span::styled(" Crypto folder", theme::panel_title()))
         .border_style(border_style);
 
     let paragraph = Paragraph::new(vec![line]).block(block);

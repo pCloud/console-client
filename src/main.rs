@@ -536,7 +536,7 @@ fn handle_web_login(client: &Arc<Mutex<PCloudClient>>, save_credentials: bool) -
 
     // Try to auto-open browser
     if has_display() {
-        match open_url(&session.login_url) {
+        match open_url(&session.login_url, false) {
             Ok(true) => print_status(StatusIndicator::Success, "Browser opened automatically"),
             Ok(false) => print_status(
                 StatusIndicator::Warning,
