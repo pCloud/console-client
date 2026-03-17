@@ -24,10 +24,7 @@ pub fn render(frame: &mut Frame, state: &TuiState, area: Rect) {
                 theme::title_style(),
             ));
         } else {
-            spans.push(Span::styled(
-                format!(" {} ", key),
-                theme::key_hint_style(),
-            ));
+            spans.push(Span::styled(format!(" {} ", key), theme::key_hint_style()));
             spans.push(Span::styled(format!("{} ", label), theme::muted_text()));
         }
         spans.push(Span::raw(" "));

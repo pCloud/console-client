@@ -297,7 +297,7 @@ fn check_fusermount() -> CheckResult {
                     name: "fusermount".into(),
                     detail: path,
                     ok: true,
-                        };
+                };
             }
         }
     }
@@ -488,19 +488,11 @@ pub fn run_doctor() -> crate::error::Result<()> {
     for dep in REQUIRED_LIBS {
         match probe_library(dep.soname) {
             Ok(path) => {
-                let detail = format!(
-                    "{:<28} {}",
-                    format!("{} ({})", dep.name, dep.soname),
-                    path
-                );
+                let detail = format!("{:<28} {}", format!("{} ({})", dep.name, dep.soname), path);
                 eprint_status(StatusIndicator::Success, &detail);
             }
             Err(msg) => {
-                let detail = format!(
-                    "{:<28} {}",
-                    format!("{} ({})", dep.name, dep.soname),
-                    msg
-                );
+                let detail = format!("{:<28} {}", format!("{} ({})", dep.name, dep.soname), msg);
                 eprint_status(StatusIndicator::Error, &detail);
                 missing_sonames.push(dep.soname);
                 any_lib_failed = true;
@@ -632,7 +624,10 @@ VERSION_ID="22.04"
     #[test]
     fn test_parse_unknown() {
         let content = "ID=nixos\n";
-        assert_eq!(distro_from_os_release(content), Distro::Unknown("nixos".into()));
+        assert_eq!(
+            distro_from_os_release(content),
+            Distro::Unknown("nixos".into())
+        );
     }
 
     #[test]
@@ -697,7 +692,11 @@ VERSION_ID="22.04"
         let hint = get_install_hint(&Distro::Ubuntu, &["libssl.so.3", "libcrypto.so.3"]);
         // Should contain libssl3 only once
         let count = hint.matches("libssl3").count();
-        assert_eq!(count, 1, "libssl3 should appear exactly once, got: {}", hint);
+        assert_eq!(
+            count, 1,
+            "libssl3 should appear exactly once, got: {}",
+            hint
+        );
     }
 
     // -- init_error_hint tests --

@@ -158,10 +158,8 @@ impl App {
                 }
                 KeyCode::Enter => {
                     if let Some(ref focus) = self.state.about_focus {
-                        let client_commit =
-                            option_env!("PCLOUD_GIT_COMMIT").unwrap_or("main");
-                        let pclsync_commit =
-                            option_env!("PCLSYNC_GIT_COMMIT").unwrap_or("main");
+                        let client_commit = option_env!("PCLOUD_GIT_COMMIT").unwrap_or("main");
+                        let pclsync_commit = option_env!("PCLSYNC_GIT_COMMIT").unwrap_or("main");
                         let url = match focus {
                             AboutFocus::ClientBuild => format!(
                                 "https://github.com/pCloud/console-client/commit/{}",

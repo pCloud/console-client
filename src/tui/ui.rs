@@ -29,7 +29,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // Top-level layout: tab bar + content + help bar
     let outer = Layout::vertical([
         Constraint::Length(1), // Tab bar
-        Constraint::Fill(1),  // Content area
+        Constraint::Fill(1),   // Content area
         Constraint::Length(1), // Help bar
     ])
     .split(frame.area());
@@ -65,7 +65,7 @@ fn render_dashboard(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rec
         Constraint::Length(5), // Header (3 content lines + 2 borders)
         Constraint::Length(3), // Crypto
         Constraint::Length(4), // Transfers
-        Constraint::Fill(1),  // Activity log
+        Constraint::Fill(1),   // Activity log
     ])
     .split(area);
 

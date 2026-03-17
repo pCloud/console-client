@@ -52,7 +52,10 @@ pub fn render(frame: &mut Frame, state: &TuiState, area: Rect) {
         Span::styled(&state.status.status_str, status_style),
         Span::raw("          "),
         Span::styled("Account: ", theme::muted_text()),
-        Span::styled(format!("{}{}", email_str, location_suffix), theme::normal_text()),
+        Span::styled(
+            format!("{}{}", email_str, location_suffix),
+            theme::normal_text(),
+        ),
         status_msg_span,
     ]);
 
@@ -79,10 +82,7 @@ pub fn render(frame: &mut Frame, state: &TuiState, area: Rect) {
     let version = env!("CARGO_PKG_VERSION");
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(Span::styled(
-            " pCloud ",
-            theme::title_style(),
-        ))
+        .title(Span::styled(" pCloud ", theme::title_style()))
         .title_alignment(Alignment::Left)
         .border_style(theme::focused_border())
         .title_bottom(

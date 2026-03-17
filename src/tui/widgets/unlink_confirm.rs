@@ -20,10 +20,7 @@ pub fn render(frame: &mut Frame, state: &TuiState) {
             "  This will clear ALL local data:",
             theme::error_text(),
         )),
-        Line::from(Span::styled(
-            "  - Saved credentials",
-            theme::normal_text(),
-        )),
+        Line::from(Span::styled("  - Saved credentials", theme::normal_text())),
         Line::from(Span::styled("  - Sync database", theme::normal_text())),
         Line::from(Span::styled("  - All cached data", theme::normal_text())),
         Line::from(""),

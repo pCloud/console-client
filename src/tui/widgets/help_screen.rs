@@ -21,10 +21,7 @@ pub fn render(frame: &mut Frame, area: Rect) {
         Line::from(""),
         Line::from(vec![
             Span::styled("  FAQ               ", theme::muted_text()),
-            Span::styled(
-                "https://www.pcloud.com/help.html",
-                theme::status_syncing(),
-            ),
+            Span::styled("https://www.pcloud.com/help.html", theme::status_syncing()),
         ]),
         Line::from(vec![
             Span::styled("  Contact           ", theme::muted_text()),
