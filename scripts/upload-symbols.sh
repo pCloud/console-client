@@ -3,7 +3,6 @@
 #
 # Prerequisites:
 #   - dump_syms:    cargo install dump_syms
-#   - bugsnag-cli:  npm install -g @bugsnag/cli
 #
 # Usage:
 #   BUGSNAG_API_KEY=<key> ./scripts/upload-symbols.sh
@@ -16,13 +15,16 @@ if [ -z "${BUGSNAG_API_KEY:-}" ]; then
 fi
 
 echo "Building release with debug info..."
-RUSTFLAGS="-C debuginfo=2" cargo build --release --features crash-reporting
+cargo build --release --features crash-reporting
 
 echo "Generating Breakpad symbol file..."
 dump_syms ./target/release/pcloud-cli > pcloud-cli.sym
 
 echo "Uploading symbols to Bugsnag..."
-bugsnag-cli upload breakpad ./pcloud-cli.sym --api-key="$BUGSNAG_API_KEY"
+curl --fail --silent --show-error \
+    -F "apiKey=${BUGSNAG_API_KEY}" \
+    -F "symbolFile=@pcloud-cli.sym" \
+    https://upload.bugsnag.com/breakpad
 
 echo "Stripping binary for distribution..."
 strip ./target/release/pcloud-cli

@@ -86,3 +86,6 @@ RUN set -eux; \
 
 # Packaging tools
 RUN cargo install cargo-deb cargo-generate-rpm
+
+# Symbol extraction for crash-reporting
+RUN cargo install dump_syms

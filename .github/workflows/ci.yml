@@ -27,7 +27,7 @@ jobs:
   lint:
     needs: setup
     runs-on: ubuntu-latest
-    container: ghcr.io/${{ needs.setup.outputs.repo_lc }}/ci:2.0
+    container: ghcr.io/${{ needs.setup.outputs.repo_lc }}/ci:2.1
     steps:
       - uses: actions/checkout@v4
         with:
@@ -77,7 +77,7 @@ jobs:
             pkg-config-path: /usr/lib/arm-linux-gnueabihf/pkgconfig
             bindgen-target: arm-linux-gnueabihf
     runs-on: ${{ matrix.runner }}
-    container: ${{ matrix.use-container && format('ghcr.io/{0}/ci:2.0', needs.setup.outputs.repo_lc) || '' }}
+    container: ${{ matrix.use-container && format('ghcr.io/{0}/ci:2.1', needs.setup.outputs.repo_lc) || '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -203,6 +203,24 @@ jobs:
       - name: Test (native aarch64 only)
         run: cargo test --release --target aarch64-apple-darwin
 
+      - name: Install dump_syms
+        if: env.RELEASE_BUILD == 'true'
+        run: cargo install dump_syms
+
+      - name: Extract macOS symbols
+        if: env.RELEASE_BUILD == 'true'
+        run: |
+          dump_syms target/aarch64-apple-darwin/release/pcloud-cli > pcloud-cli-macos-arm64.sym
+          dump_syms target/x86_64-apple-darwin/release/pcloud-cli > pcloud-cli-macos-x86_64.sym
+
+      - name: Upload macOS symbols
+        if: env.RELEASE_BUILD == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: symbols-macos
+          path: "*.sym"
+          retention-days: 5
+
       - name: Create universal binary
         run: |
           lipo -create -output pcloud-cli-macos-universal \
@@ -219,11 +237,56 @@ jobs:
           path: pcloud-cli-macos-universal
           retention-days: 5
 
+  upload-symbols:
+    runs-on: ubuntu-latest
+    needs: [setup, build-and-test, build-macos]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v'))
+    container: ghcr.io/${{ needs.setup.outputs.repo_lc }}/ci:2.1
+    steps:
+      - name: Download Linux binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: binary-linux-*
+          path: artifacts/
+
+      - name: Download macOS symbols
+        uses: actions/download-artifact@v4
+        with:
+          name: symbols-macos
+          path: artifacts/symbols-macos/
+
+      - name: Extract Linux symbols
+        run: |
+          for arch in linux-amd64 linux-arm64 linux-armhf; do
+            bin="artifacts/binary-${arch}/pcloud-cli"
+            if [ -f "$bin" ]; then
+              chmod +x "$bin"
+              dump_syms "$bin" > "pcloud-cli-${arch}.sym"
+              echo "Extracted symbols for ${arch}"
+            fi
+          done
+
+      - name: Upload all symbols to Bugsnag
+        run: |
+          # Collect macOS symbols alongside Linux ones
+          cp artifacts/symbols-macos/*.sym . 2>/dev/null || true
+          for sym in *.sym; do
+            [ -f "$sym" ] || continue
+            echo "Uploading ${sym}..."
+            curl --fail --silent --show-error \
+              -F "apiKey=${BUGSNAG_API_KEY}" \
+              -F "symbolFile=@${sym}" \
+              https://upload.bugsnag.com/breakpad
+          done
+          echo "All symbols uploaded."
+        env:
+          BUGSNAG_API_KEY: ${{ secrets.BUGSNAG_API_KEY }}
+
   package:
     runs-on: ubuntu-latest
     needs: [setup, lint, build-and-test]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v'))
-    container: ghcr.io/${{ needs.setup.outputs.repo_lc }}/ci:2.0
+    container: ghcr.io/${{ needs.setup.outputs.repo_lc }}/ci:2.1
     strategy:
       matrix:
         include:

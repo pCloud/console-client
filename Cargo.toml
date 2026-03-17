@@ -44,6 +44,10 @@ ureq = { version = "3", optional = true }
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.29", features = ["signal", "process"] }
 
+[profile.release]
+debug = 2
+strip = false
+
 [build-dependencies]
 cc = "1.0"
 bindgen = "0.70"

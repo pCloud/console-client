@@ -43,6 +43,6 @@ jobs:
           build-args: |
             RUST_VERSION=${{ env.RUST_VERSION }}
           tags: |
-            ghcr.io/${{ env.REPO_LC }}/ci:2.0
-            ghcr.io/${{ env.REPO_LC }}/ci:2.0-rust-${{ env.RUST_VERSION }}
+            ghcr.io/${{ env.REPO_LC }}/ci:2.1
+            ghcr.io/${{ env.REPO_LC }}/ci:2.1-rust-${{ env.RUST_VERSION }}
             ghcr.io/${{ env.REPO_LC }}/ci:latest
