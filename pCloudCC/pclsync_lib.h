@@ -57,6 +57,7 @@ namespace console_client {
       void setupsetup_crypto(bool p) {setup_crypto_ = p;}
       void set_newuser(bool p) {newuser_ = p;}
       void set_daemon(bool p) {daemon_ = p;}
+      bool is_daemon() const { return daemon_; }
       void set_status_callback(status_callback_t p) {status_callback_ = p;}
       //Console 
       void get_pass_from_console();

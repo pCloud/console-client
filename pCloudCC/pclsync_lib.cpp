@@ -163,8 +163,47 @@ static char const * status2string (uint32_t status){
     case PSTATUS_SCANNING: return "SCANNING";
     case PSTATUS_USER_MISMATCH: return "USER_MISMATCH";
     case PSTATUS_ACCOUT_EXPIRED: return "ACCOUT_EXPIRED";
+    case PSTATUS_TFA_REQUIRED: return "TFA_REQUIRED";
+    case PSTATUS_BAD_TFA_CODE: return "BAD_TFA_CODE";
     default :return "Unrecognized status";
   }
+}
+
+static void prompt_and_submit_tfa(bool request_code){
+  if (request_code){
+    plogged_device_list_t *devs=NULL;
+    int rc=psync_tfa_send_nofification(&devs);
+    if (rc==0 && devs && devs->entrycnt>0){
+      std::cout << "A login code was sent via notification to:" << std::endl;
+      for (uint32_t i=0; i<devs->entrycnt; ++i)
+        std::cout << "  - " << devs->devices[i].name << std::endl;
+      psync_free(devs);
+    } else {
+      if (devs) psync_free(devs);
+      char *country_code=NULL, *phone=NULL;
+      rc=psync_tfa_send_sms(&country_code, &phone);
+      if (rc==0){
+        std::cout << "A login code was sent via SMS";
+        if (country_code && phone)
+          std::cout << " to +" << country_code << " " << phone;
+        std::cout << "." << std::endl;
+      } else {
+        std::cout << "Could not auto-send a code (notification rc=" << rc
+                  << "). If you have a recovery code, enter it prefixed with 'r:'." << std::endl;
+      }
+      if (country_code) psync_free(country_code);
+      if (phone) psync_free(phone);
+    }
+  }
+  std::cout << "Enter login code (prefix with 'r:' for recovery code): " << std::flush;
+  std::string code;
+  std::getline(std::cin, code);
+  int is_recovery=0;
+  if (code.rfind("r:", 0)==0){
+    is_recovery=1;
+    code.erase(0, 2);
+  }
+  psync_tfa_set_code(code.c_str(), 1 /*trust this device*/, is_recovery);
 }
 
 static void status_change(pstatus_t* status) {
@@ -206,6 +245,21 @@ static void status_change(pstatus_t* status) {
     }
       
     }
+  }
+  else if (status->status==PSTATUS_TFA_REQUIRED){
+    if (clib::pclsync_lib::get_lib().is_daemon()){
+      std::cout << "TFA required but running as daemon; cannot prompt for code." << std::endl;
+      exit(1);
+    }
+    prompt_and_submit_tfa(true);
+  }
+  else if (status->status==PSTATUS_BAD_TFA_CODE){
+    if (clib::pclsync_lib::get_lib().is_daemon()){
+      std::cout << "Bad TFA code and running as daemon; cannot re-prompt." << std::endl;
+      exit(1);
+    }
+    std::cout << "Code rejected, try again." << std::endl;
+    prompt_and_submit_tfa(false);
   }
   if (status->status==PSTATUS_READY || status->status==PSTATUS_UPLOADING || status->status==PSTATUS_DOWNLOADING || status->status==PSTATUS_DOWNLOADINGANDUPLOADING){
     if (!cryptocheck){
