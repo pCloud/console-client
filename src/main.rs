@@ -39,8 +39,8 @@ use clap::Parser;
 use secrecy::{ExposeSecret, SecretString};
 
 use console_client::cli::{
-    print_cli_auth_help, prompt_auth_choice, prompt_confirm, prompt_token, AuthChoice, Cli,
-    CommandPrompt, InteractiveCommand,
+    print_cli_auth_help, prompt_auth_choice, prompt_confirm, prompt_token, AuthChoice, BackupArgs,
+    BackupOp, Cli, Command, CommandPrompt, InteractiveCommand,
 };
 use console_client::error::{AuthError, PCloudError};
 use console_client::ffi::{register_status_callback, status_callback_trampoline, status_to_string};
@@ -114,6 +114,12 @@ fn run(cli: Cli) -> Result<()> {
     }
     if cli.is_unlink() {
         return run_unlink();
+    }
+
+    // Subcommand path (e.g. `pcloud backup ...`) — always routes through
+    // the auto-start daemon flow and never combines with the legacy flags.
+    if let Some(Command::Backup(args)) = cli.command.clone() {
+        return run_backup_subcommand(args);
     }
 
     // Handle client mode (talk to daemon)
@@ -323,6 +329,9 @@ fn run_foreground_mode(cli: Cli, env_secrets: ResolvedSecrets) -> Result<()> {
     // 1. Initialize pCloud client
     print_status(StatusIndicator::Info, "Initializing pCloud client...");
     let client = PCloudClient::init()?;
+
+    // Install engine-level callbacks (backup events ring buffer, etc.)
+    console_client::daemon::init_engine_callbacks();
 
     // 2. Set up status callback for progress reporting
     register_status_callback(|status| {
@@ -962,6 +971,9 @@ fn run_daemon_mode(cli: Cli, env_secrets: ResolvedSecrets) -> Result<()> {
     print_status(StatusIndicator::Info, "Initializing pCloud client...");
     let client = PCloudClient::init()?;
 
+    // Install engine-level callbacks (backup events ring buffer, etc.)
+    console_client::daemon::init_engine_callbacks();
+
     // Determine authentication method and whether to save the token
     let (auth_token, save_token) = {
         let client_guard = client
@@ -1354,6 +1366,131 @@ fn print_daemon_response(response: &console_client::daemon::DaemonResponse) {
         }
         DaemonResponse::BackupRootName(name) => println!("{}", name),
     }
+}
+
+// ============================================================================
+// Backup subcommand auto-start flow
+// ============================================================================
+
+/// Run a `pcloud backup ...` subcommand.
+///
+/// Flow:
+/// 1. If a daemon is already alive, send the matching `DaemonCommand::Backup*`
+///    over IPC and print the response.
+/// 2. Otherwise, briefly initialize the pclsync library here to check whether
+///    saved credentials exist. If they do, fork+exec a headless `pcloud -d`
+///    in the background (no mountpoint), poll the IPC socket until alive,
+///    and then send the command.
+/// 3. If no saved credentials are present, error out with a hint.
+fn run_backup_subcommand(args: BackupArgs) -> Result<()> {
+    use console_client::daemon::{DaemonClient, DaemonConfig};
+    use console_client::error::DaemonError;
+
+    let config = DaemonConfig::default();
+    let daemon_client = DaemonClient::new(config.socket_path());
+
+    // Translate the parsed BackupOp into a DaemonCommand once so we can reuse
+    // it whether the daemon was already alive or we just auto-started one.
+    let cmd = backup_op_to_daemon_command(&args.op);
+
+    if daemon_client.is_daemon_alive() {
+        return send_backup_command_and_print(&daemon_client, cmd);
+    }
+
+    // Daemon isn't running — try the auto-start path.
+    print_status(
+        StatusIndicator::Info,
+        "No daemon detected; attempting auto-start...",
+    );
+
+    {
+        // Scope the temporary client so its Drop (which calls psync_destroy)
+        // runs before we spawn the daemon child. The daemon child re-inits
+        // pclsync in its own process address space.
+        let client = PCloudClient::init()?;
+        let guard = client
+            .lock()
+            .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
+        if !guard.has_saved_credentials() {
+            drop(guard);
+            drop(client);
+            eprintln!(
+                "Error: no pCloud daemon is running and no saved auth token was found.\n\
+                 Hint: run `pcloud` once to complete the interactive web-login flow,\n\
+                 or supply a token non-interactively via `pcloud -t <token>` (or the\n\
+                 PCLOUD_AUTH_TOKEN environment variable). After a successful login the\n\
+                 token is persisted by default, so subsequent `pcloud backup ...` calls\n\
+                 will auto-start a daemon."
+            );
+            return Err(PCloudError::Daemon(DaemonError::NotRunning));
+        }
+        // Saved credentials found — release the client and start the daemon.
+    }
+
+    // Spawn `pcloud -d` (no -m so it stays headless).
+    let exe = std::env::current_exe().map_err(PCloudError::Io)?;
+    std::process::Command::new(&exe)
+        .arg("-d")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| {
+            PCloudError::Daemon(DaemonError::DaemonizeFailed(format!(
+                "failed to spawn `{} -d`: {}",
+                exe.display(),
+                e
+            )))
+        })?;
+
+    // Poll the IPC socket for up to 5 seconds.
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let mut alive = false;
+    while std::time::Instant::now() < deadline {
+        if daemon_client.is_daemon_alive() {
+            alive = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    if !alive {
+        eprintln!(
+            "Error: spawned a daemon but it did not respond on {} within 5s.",
+            config.socket_path().display()
+        );
+        return Err(PCloudError::Daemon(DaemonError::ConnectionFailed));
+    }
+
+    send_backup_command_and_print(&daemon_client, cmd)
+}
+
+fn backup_op_to_daemon_command(op: &BackupOp) -> console_client::daemon::DaemonCommand {
+    use console_client::daemon::DaemonCommand;
+    match op {
+        BackupOp::Add { path } => DaemonCommand::BackupCreate {
+            path: path.to_string_lossy().into_owned(),
+        },
+        BackupOp::List => DaemonCommand::BackupList,
+        BackupOp::Remove { id } => DaemonCommand::BackupRemove { sync_id: *id },
+        BackupOp::StopDevice => DaemonCommand::BackupStopDevice,
+        BackupOp::Status { id } => DaemonCommand::BackupStatus { sync_id: *id },
+        BackupOp::RootName => DaemonCommand::BackupRootName,
+    }
+}
+
+fn send_backup_command_and_print(
+    daemon_client: &console_client::daemon::DaemonClient,
+    cmd: console_client::daemon::DaemonCommand,
+) -> Result<()> {
+    use console_client::daemon::DaemonResponse;
+    let response = daemon_client.send_command(cmd)?;
+    print_daemon_response(&response);
+    if matches!(response, DaemonResponse::Error(_)) {
+        return Err(PCloudError::Daemon(
+            console_client::error::DaemonError::CommandFailed(response.to_string()),
+        ));
+    }
+    Ok(())
 }
 
 /// Print help for client mode commands.

@@ -676,16 +676,14 @@ extern "C" {
     /// or NULL on error. The caller must free the returned pointer with `psync_free`.
     pub fn get_backup_root_name() -> *mut c_char;
 
-    /// Register a callback for backup-specific events.
-    ///
-    /// This is independent of the regular event callback set via
-    /// `psync_start_sync` — both callbacks coexist and fire on different
-    /// event sets.
-    ///
-    /// # Safety
-    ///
-    /// The callback must be safe to call from any thread.
-    pub fn psync_register_backup_events_callback(callback: pevent_callback_t);
+    // NOTE: `psync_register_backup_events_callback` is declared in
+    // `pclsync/psynclib.h:1557` but its implementation is currently missing
+    // from the pclsync C source we link against. Linking to it would fail
+    // with an undefined-symbol error, so we deliberately do NOT declare it
+    // here. The Rust-side `BACKUP_EVENT_CALLBACK` plumbing is kept in
+    // `ffi::callbacks` so that once pclsync ships the implementation (or a
+    // bindgen-generated stub becomes available), wiring it back in is a
+    // one-line change.
 
     /// Filtered sync list by sync type.
     ///

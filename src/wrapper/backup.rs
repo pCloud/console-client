@@ -159,18 +159,30 @@ pub fn recent_backup_events() -> Vec<BackupEvent> {
 ///
 /// Safe to call from anywhere; subsequent calls are no-ops thanks to
 /// [`std::sync::Once`].
+///
+/// # Note
+///
+/// `psync_register_backup_events_callback` is declared in `psynclib.h` but
+/// its implementation is currently missing from the upstream pclsync C
+/// source. We still install the Rust-side closure into
+/// `ffi::callbacks::BACKUP_EVENT_CALLBACK` so the trampoline is wired and
+/// ready: if pclsync ever ships the symbol, restoring the FFI call site
+/// is a one-line change. Until then `recent_backup_events()` will return
+/// an empty snapshot in production.
 pub fn ensure_backup_events_registered() {
     BACKUP_EVENT_REGISTER.call_once(|| {
         callbacks::register_backup_event_callback(|kind, data| {
             push_event(make_event(kind, data));
         });
-        // Safety: psync_register_backup_events_callback installs the C callback;
-        // safe to call after psync_init.
-        unsafe {
-            raw::psync_register_backup_events_callback(Some(
-                callbacks::backup_event_callback_trampoline,
-            ));
-        }
+        // TODO: re-enable once pclsync ships psync_register_backup_events_callback
+        // (declared at pclsync/psynclib.h:1557 but currently undefined). When
+        // restored, the call below installs the trampoline.
+        //
+        //     unsafe {
+        //         raw::psync_register_backup_events_callback(Some(
+        //             callbacks::backup_event_callback_trampoline,
+        //         ));
+        //     }
     });
 }
 
