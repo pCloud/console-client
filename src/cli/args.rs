@@ -19,7 +19,7 @@
 use std::path::PathBuf;
 use std::sync::LazyLock;
 
-use clap::Parser;
+use clap::{Args, Parser, Subcommand};
 
 /// Build a multi-line version string including pclsync info.
 fn build_version_string() -> String {
@@ -153,6 +153,53 @@ pub struct Cli {
     /// install commands for any missing dependencies.
     #[arg(long = "doctor")]
     pub doctor: bool,
+
+    /// Subcommand to execute (e.g. `backup`).
+    ///
+    /// When omitted, runs in the classic flag-driven mode
+    /// (foreground / daemon / client based on `-d` / `-k` / etc).
+    #[command(subcommand)]
+    pub command: Option<Command>,
+}
+
+/// Top-level CLI subcommand groups.
+#[derive(Subcommand, Debug, Clone)]
+pub enum Command {
+    /// Manage pCloud backups for the current device.
+    Backup(BackupArgs),
+}
+
+/// Arguments for the `backup` subcommand group.
+#[derive(Args, Debug, Clone)]
+pub struct BackupArgs {
+    #[command(subcommand)]
+    pub op: BackupOp,
+}
+
+/// Individual backup operations.
+#[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
+pub enum BackupOp {
+    /// Register a local folder as a pCloud backup destination.
+    Add {
+        /// Local folder to back up.
+        path: PathBuf,
+    },
+    /// List backups configured for the current device.
+    List,
+    /// Remove a backup by sync id (does not delete files).
+    Remove {
+        /// Sync id of the backup to remove.
+        id: u32,
+    },
+    /// Stop all backups on this device.
+    StopDevice,
+    /// Show backup status; optionally filter to a single backup by id.
+    Status {
+        /// Sync id to filter on. Omit for a full-device summary.
+        id: Option<u32>,
+    },
+    /// Print the backup root folder name for this device.
+    RootName,
 }
 
 impl Cli {
@@ -243,6 +290,29 @@ impl Cli {
                     --doctor is a standalone diagnostic command."
                     .to_string());
             }
+        }
+
+        // Subcommands are mutually exclusive with the foreground/daemon/auth
+        // flags — the subcommand path either talks to an already-running
+        // daemon or auto-starts a headless one.
+        if self.command.is_some() {
+            let conflicts = self.daemonize
+                || self.commands_only
+                || self.commands_mode
+                || self.crypto_prompt
+                || self.auth_token.is_some()
+                || self.mountpoint.is_some()
+                || self.doctor
+                || self.logout
+                || self.unlink;
+            if conflicts {
+                return Err(
+                    "Subcommands cannot be combined with the foreground/daemon/auth flags. \
+                     Run the subcommand alone, e.g. `pcloud backup add /path`."
+                        .to_string(),
+                );
+            }
+            return Ok(());
         }
 
         // Can't use both -d (daemon) and -k (client/commands_only)
@@ -705,5 +775,121 @@ mod tests {
     fn test_non_interactive_flag() {
         let cli = Cli::parse_from_args(["pcloud-cli", "--non-interactive"]);
         assert!(cli.non_interactive);
+    }
+
+    // ========================================================================
+    // Backup subcommand tests
+    // ========================================================================
+
+    #[test]
+    fn test_parse_no_subcommand_keeps_flat_mode() {
+        // Auth is web/token-only now; check that the classic flag-driven mode
+        // still parses with no subcommand present.
+        let cli = Cli::parse_from_args(["pcloud", "-t", "abc123", "-d"]);
+        assert!(cli.command.is_none());
+        assert_eq!(cli.auth_token.as_deref(), Some("abc123"));
+        assert!(cli.daemonize);
+    }
+
+    #[test]
+    fn test_parse_backup_add() {
+        let cli = Cli::parse_from_args(["pcloud", "backup", "add", "/tmp/foo"]);
+        match cli.command {
+            Some(Command::Backup(BackupArgs {
+                op: BackupOp::Add { path },
+            })) => assert_eq!(path, PathBuf::from("/tmp/foo")),
+            other => panic!("expected backup add, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_backup_list() {
+        let cli = Cli::parse_from_args(["pcloud", "backup", "list"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Backup(BackupArgs {
+                op: BackupOp::List
+            }))
+        ));
+    }
+
+    #[test]
+    fn test_parse_backup_remove() {
+        let cli = Cli::parse_from_args(["pcloud", "backup", "remove", "5"]);
+        match cli.command {
+            Some(Command::Backup(BackupArgs {
+                op: BackupOp::Remove { id },
+            })) => assert_eq!(id, 5),
+            other => panic!("expected backup remove, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_backup_status_no_id() {
+        let cli = Cli::parse_from_args(["pcloud", "backup", "status"]);
+        match cli.command {
+            Some(Command::Backup(BackupArgs {
+                op: BackupOp::Status { id },
+            })) => assert!(id.is_none()),
+            other => panic!("expected backup status, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_backup_status_with_id() {
+        let cli = Cli::parse_from_args(["pcloud", "backup", "status", "7"]);
+        match cli.command {
+            Some(Command::Backup(BackupArgs {
+                op: BackupOp::Status { id },
+            })) => assert_eq!(id, Some(7)),
+            other => panic!("expected backup status 7, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_backup_stop_device() {
+        let cli = Cli::parse_from_args(["pcloud", "backup", "stop-device"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Backup(BackupArgs {
+                op: BackupOp::StopDevice
+            }))
+        ));
+    }
+
+    #[test]
+    fn test_parse_backup_root_name() {
+        let cli = Cli::parse_from_args(["pcloud", "backup", "root-name"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Backup(BackupArgs {
+                op: BackupOp::RootName
+            }))
+        ));
+    }
+
+    #[test]
+    fn test_validate_backup_with_daemon_flag_fails() {
+        let parsed = Cli::try_parse_from_args(["pcloud", "backup", "add", "/tmp/foo", "-d"]);
+        // clap should accept the args (subcommand + global flag); validate()
+        // rejects the combination.
+        match parsed {
+            Ok(cli) => {
+                let result = cli.validate();
+                assert!(result.is_err(), "expected validate() error");
+                assert!(result
+                    .unwrap_err()
+                    .to_lowercase()
+                    .contains("subcommand"));
+            }
+            // If clap itself rejected the combination, that's also acceptable.
+            Err(_) => {}
+        }
+    }
+
+    #[test]
+    fn test_validate_backup_subcommand_alone_ok() {
+        let cli = Cli::parse_from_args(["pcloud", "backup", "list"]);
+        assert!(cli.validate().is_ok());
     }
 }

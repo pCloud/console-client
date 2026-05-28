@@ -30,7 +30,7 @@ pub mod auth_prompt;
 pub mod commands;
 
 // Re-export main types for convenience
-pub use args::Cli;
+pub use args::{BackupArgs, BackupOp, Cli, Command};
 pub use auth_prompt::{
     print_cli_auth_help, prompt_auth_choice, prompt_confirm, prompt_confirm_by_name, prompt_token,
     AuthChoice,
