@@ -354,6 +354,54 @@ pub const PSYNC_CRYPTO_INVALID_FOLDERID: u64 = u64::MAX;
 pub const PSYNC_INVALID_SYNCID: u32 = u32::MAX;
 
 // ============================================================================
+// Backup Constants
+// ============================================================================
+
+/// Sync type identifier for backups (per pclsync/psynclib.h:239).
+///
+/// Note: This is **not** a valid input to `psync_add_sync_by_path`; backups
+/// are created via `psync_create_backup` and surfaced via
+/// `psync_get_syncs_bytype("7")`.
+pub const PSYNC_BACKUPS: u32 = 7;
+
+/// Error code returned by `psync_create_backup` when the path is empty
+/// (per pclsync/psynclib.h:356).
+pub const PSYNC_BACKUP_PATH_EMPTY_ERR: c_int = 11001;
+
+/// BEAPI error: backup folders can't contain shared folders.
+pub const BEAPI_ERR_NO_PUB_F_IN_BUP: c_int = 2340;
+
+/// BEAPI error: backup folders can't contain upload links.
+pub const BEAPI_ERR_NO_UPLINK_IN_BUP: c_int = 2342;
+
+/// BEAPI error: backup folders can't contain download links.
+pub const BEAPI_ERR_NO_DL_LINK_IN_BUP: c_int = 2343;
+
+/// BEAPI error: this item can't be placed in a backup folder.
+pub const BEAPI_ERR_NOT_ALLOWED_IN_BUP: c_int = 2346;
+
+// Backup-specific event types (per pclsync/psynclib.h:1704-1707).
+/// Event: a backup was stopped.
+pub const PEVENT_BACKUP_STOP: u32 = 401;
+/// Event: an object inside a backup was deleted.
+pub const PEVENT_BKUP_OBJ_DEL: u32 = 402;
+/// Event: an object in a regular sync was deleted (reported via backup events).
+pub const PEVENT_SYNC_OBJ_DEL: u32 = 403;
+/// Event: a backup folder was deleted from Drive.
+pub const PEVENT_BKUP_F_DEL_DRIVE: u32 = 404;
+
+/// Convert a backup event code to a short human-readable name.
+pub fn backup_event_to_string(event: u32) -> &'static str {
+    match event {
+        PEVENT_BACKUP_STOP => "backup-stopped",
+        PEVENT_BKUP_OBJ_DEL => "backup-object-deleted",
+        PEVENT_SYNC_OBJ_DEL => "sync-object-deleted",
+        PEVENT_BKUP_F_DEL_DRIVE => "backup-folder-deleted-from-drive",
+        _ => "unknown-backup-event",
+    }
+}
+
+// ============================================================================
 // Helper Functions
 // ============================================================================
 
@@ -466,5 +514,33 @@ mod tests {
             PSYNC_PERM_WRITE,
             PSYNC_PERM_CREATE | PSYNC_PERM_MODIFY | PSYNC_PERM_DELETE
         );
+    }
+
+    #[test]
+    fn test_backup_constants() {
+        assert_eq!(PSYNC_BACKUPS, 7);
+        assert_eq!(PSYNC_BACKUP_PATH_EMPTY_ERR, 11001);
+        assert_eq!(PEVENT_BACKUP_STOP, 401);
+        assert_eq!(PEVENT_BKUP_OBJ_DEL, 402);
+        assert_eq!(PEVENT_SYNC_OBJ_DEL, 403);
+        assert_eq!(PEVENT_BKUP_F_DEL_DRIVE, 404);
+    }
+
+    #[test]
+    fn test_backup_event_to_string() {
+        assert_eq!(backup_event_to_string(PEVENT_BACKUP_STOP), "backup-stopped");
+        assert_eq!(
+            backup_event_to_string(PEVENT_BKUP_OBJ_DEL),
+            "backup-object-deleted"
+        );
+        assert_eq!(
+            backup_event_to_string(PEVENT_SYNC_OBJ_DEL),
+            "sync-object-deleted"
+        );
+        assert_eq!(
+            backup_event_to_string(PEVENT_BKUP_F_DEL_DRIVE),
+            "backup-folder-deleted-from-drive"
+        );
+        assert_eq!(backup_event_to_string(0), "unknown-backup-event");
     }
 }

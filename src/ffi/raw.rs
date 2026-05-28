@@ -607,6 +607,104 @@ extern "C" {
 }
 
 // ============================================================================
+// Backup Functions
+// ============================================================================
+
+extern "C" {
+    /// Create a new backup for the given local path.
+    ///
+    /// This is a synchronous backend call that registers the path with the
+    /// pCloud backup service. On failure, `*err` may be set to a heap string
+    /// that the caller must free with `psync_free`.
+    ///
+    /// # Returns
+    ///
+    /// - `0` on success
+    /// - `PSYNC_BACKUP_PATH_EMPTY_ERR` (11001) if the path is empty
+    /// - Other positive error codes from the BEAPI family
+    ///
+    /// # Note
+    ///
+    /// The header declares `path` as `char*` (non-const), but the library does
+    /// not mutate it. Callers pass a `*mut c_char` cast from a `CString::as_ptr`.
+    ///
+    /// # Safety
+    ///
+    /// - `path` must be a valid null-terminated C string
+    /// - `err` must be a valid pointer to a `*mut c_char`
+    /// - If `*err` is non-null after the call, it must be freed via `psync_free`
+    pub fn psync_create_backup(path: *mut c_char, err: *mut *mut c_char) -> c_int;
+
+    /// Delete a backup by sync id.
+    ///
+    /// # Returns
+    ///
+    /// - `0` on success
+    /// - Non-zero on failure (may set `*err_msg`)
+    ///
+    /// # Safety
+    ///
+    /// - `sync_id` should be a valid backup sync id from `psync_get_syncs_bytype("7")`
+    /// - `err_msg` must be a valid pointer to a `*mut c_char`
+    /// - If `*err_msg` is non-null after the call, it must be freed via `psync_free`
+    pub fn psync_delete_backup(sync_id: psync_syncid_t, err_msg: *mut *mut c_char) -> c_int;
+
+    /// Stop all backups on a device.
+    ///
+    /// `folder_id` of `0` means the current device. Returns void; non-null
+    /// `*err_msg` after the call indicates failure.
+    ///
+    /// # Safety
+    ///
+    /// - `err_msg` must be a valid pointer to a `*mut c_char`
+    /// - If `*err_msg` is non-null after the call, it must be freed via `psync_free`
+    pub fn psync_stop_device(folder_id: psync_folderid_t, err_msg: *mut *mut c_char);
+
+    /// Delete the backup device root folder.
+    ///
+    /// # Returns
+    ///
+    /// - `0` on success
+    /// - Non-zero on failure
+    pub fn psync_delete_backup_device(folder_id: psync_folderid_t) -> c_int;
+
+    /// Get the backup root folder name for this device.
+    ///
+    /// # Returns
+    ///
+    /// Pointer to a heap-allocated string with the device's backup root name,
+    /// or NULL on error. The caller must free the returned pointer with `psync_free`.
+    pub fn get_backup_root_name() -> *mut c_char;
+
+    /// Register a callback for backup-specific events.
+    ///
+    /// This is independent of the regular event callback set via
+    /// `psync_start_sync` — both callbacks coexist and fire on different
+    /// event sets.
+    ///
+    /// # Safety
+    ///
+    /// The callback must be safe to call from any thread.
+    pub fn psync_register_backup_events_callback(callback: pevent_callback_t);
+
+    /// Filtered sync list by sync type.
+    ///
+    /// The sync type is passed as a decimal string, e.g. `"7"` for
+    /// `PSYNC_BACKUPS`.
+    ///
+    /// # Returns
+    ///
+    /// Pointer to a `psync_folder_list_t` (must be freed with `psync_free`),
+    /// or NULL on error.
+    ///
+    /// # Safety
+    ///
+    /// - `sync_type` must be a valid null-terminated C string
+    /// - The returned pointer must be freed by the caller via `psync_free`
+    pub fn psync_get_syncs_bytype(sync_type: *const c_char) -> *mut psync_folder_list_t;
+}
+
+// ============================================================================
 // Folder Listing Functions
 // ============================================================================
 
