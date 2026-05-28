@@ -42,6 +42,7 @@ use crate::Result;
 
 /// Web login base URL.
 const WEB_LOGIN_BASE_URL: &str = "https://my.pcloud.com/webview/authentication";
+const WEB_LOGIN_PLATFORM_ID: u32 = 11;
 
 /// Configuration for web login session.
 ///
@@ -62,9 +63,6 @@ pub struct WebLoginConfig {
     pub client_id: String,
     /// System language
     pub lang: String,
-    /// Theme (dark/light)
-    pub theme: String,
-    /// Operating system type (3 = Desktop generic)
     pub os: u32,
 }
 
@@ -78,8 +76,7 @@ impl Default for WebLoginConfig {
             app_version: env!("CARGO_PKG_VERSION").to_string(),
             client_id: "pcloud-cli".to_string(),
             lang: get_system_language(),
-            theme: "light".to_string(),
-            os: 7, // Console client
+            os: WEB_LOGIN_PLATFORM_ID,
         }
     }
 }
@@ -214,7 +211,6 @@ fn build_login_url(request_id: &str, config: &WebLoginConfig) -> Result<String> 
         ("appversion", config.app_version.as_str()),
         ("clientid", config.client_id.as_str()),
         ("lang", config.lang.as_str()),
-        ("theme", config.theme.as_str()),
     ];
 
     let query_string: String = params
@@ -306,8 +302,7 @@ mod tests {
         let config = WebLoginConfig::default();
         assert_eq!(config.view, "login");
         assert_eq!(config.client_id, "pcloud-cli");
-        assert_eq!(config.theme, "light");
-        assert_eq!(config.os, 7);
+        assert_eq!(config.os, WEB_LOGIN_PLATFORM_ID);
         assert!(!config.app_version.is_empty());
     }
 
@@ -329,7 +324,6 @@ mod tests {
             app_version: "1.0.0".to_string(),
             client_id: "pcloud-cli".to_string(),
             lang: "en".to_string(),
-            theme: "dark".to_string(),
             os: 3,
         };
 
