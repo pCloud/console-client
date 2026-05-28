@@ -172,10 +172,9 @@ impl std::fmt::Debug for DaemonCommand {
             DaemonCommand::Ping => write!(f, "Ping"),
             DaemonCommand::Logout => write!(f, "Logout"),
             DaemonCommand::Unlink => write!(f, "Unlink"),
-            DaemonCommand::BackupCreate { path } => f
-                .debug_struct("BackupCreate")
-                .field("path", path)
-                .finish(),
+            DaemonCommand::BackupCreate { path } => {
+                f.debug_struct("BackupCreate").field("path", path).finish()
+            }
             DaemonCommand::BackupRemove { sync_id } => f
                 .debug_struct("BackupRemove")
                 .field("sync_id", sync_id)

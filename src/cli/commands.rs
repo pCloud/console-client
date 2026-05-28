@@ -249,12 +249,30 @@ impl InteractiveCommand {
         writeln!(writer)?;
         writeln!(writer, "Backup commands:")?;
         writeln!(writer)?;
-        writeln!(writer, "  backup add <path>     - Register a local folder as a backup")?;
-        writeln!(writer, "  backup list           - List backups for this device")?;
-        writeln!(writer, "  backup remove <id>    - Remove a backup by sync id")?;
-        writeln!(writer, "  backup stop-device    - Stop all backups on this device")?;
-        writeln!(writer, "  backup status [id]    - Show backup status (optional sync id)")?;
-        writeln!(writer, "  backup root-name      - Print the backup root folder name")?;
+        writeln!(
+            writer,
+            "  backup add <path>     - Register a local folder as a backup"
+        )?;
+        writeln!(
+            writer,
+            "  backup list           - List backups for this device"
+        )?;
+        writeln!(
+            writer,
+            "  backup remove <id>    - Remove a backup by sync id"
+        )?;
+        writeln!(
+            writer,
+            "  backup stop-device    - Stop all backups on this device"
+        )?;
+        writeln!(
+            writer,
+            "  backup status [id]    - Show backup status (optional sync id)"
+        )?;
+        writeln!(
+            writer,
+            "  backup root-name      - Print the backup root folder name"
+        )?;
         writeln!(writer)?;
         Ok(())
     }
@@ -283,12 +301,10 @@ fn parse_backup_verb(original_rest: &str, lower_rest: &str) -> InteractiveComman
             }
         }
         "list" | "ls" => InteractiveCommand::BackupList,
-        "remove" | "rm" | "delete" | "del" => {
-            match args_lower.parse::<u32>() {
-                Ok(id) => InteractiveCommand::BackupRemove(id),
-                Err(_) => InteractiveCommand::Unknown(format!("backup remove {}", args_lower)),
-            }
-        }
+        "remove" | "rm" | "delete" | "del" => match args_lower.parse::<u32>() {
+            Ok(id) => InteractiveCommand::BackupRemove(id),
+            Err(_) => InteractiveCommand::Unknown(format!("backup remove {}", args_lower)),
+        },
         "stop-device" | "stopdevice" => InteractiveCommand::BackupStopDevice,
         "status" | "stat" => {
             if args_lower.is_empty() {
@@ -606,8 +622,14 @@ mod tests {
 
     #[test]
     fn test_parse_backup_bare_word_is_help() {
-        assert_eq!(InteractiveCommand::parse("backup"), InteractiveCommand::BackupHelp);
-        assert_eq!(InteractiveCommand::parse("BACKUP"), InteractiveCommand::BackupHelp);
+        assert_eq!(
+            InteractiveCommand::parse("backup"),
+            InteractiveCommand::BackupHelp
+        );
+        assert_eq!(
+            InteractiveCommand::parse("BACKUP"),
+            InteractiveCommand::BackupHelp
+        );
     }
 
     #[test]
