@@ -98,16 +98,6 @@ pub fn init() {
     // Module is ready to use
 }
 
-/// Initialize engine-level callbacks shared between foreground and
-/// daemon mode.
-///
-/// Idempotent — calls beyond the first are no-ops. Currently this just
-/// installs the backup-events callback so the in-memory ring buffer
-/// starts filling as soon as the pclsync engine emits events.
-pub fn init_engine_callbacks() {
-    crate::wrapper::ensure_backup_events_registered();
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

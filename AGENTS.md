@@ -57,7 +57,7 @@ src/
 |   |-- auth.rs          # Authentication operations
 |   |-- crypto.rs        # Crypto folder operations
 |   |-- filesystem.rs    # Mount/unmount, sync folders
-|   +-- backup.rs        # Backup CRUD, status, events ring buffer
+|   +-- backup.rs        # Backup CRUD and status
 |
 |-- daemon/              # Background daemon functionality
 |   |-- mod.rs           # Re-exports, init function

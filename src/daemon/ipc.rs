@@ -292,13 +292,7 @@ impl std::fmt::Display for DaemonResponse {
                 }
             }
             DaemonResponse::BackupStatus(s) => {
-                write!(
-                    f,
-                    "device={}, backups={}, recent_events={}",
-                    s.device_name,
-                    s.backups.len(),
-                    s.recent_events.len()
-                )
+                write!(f, "device={}, backups={}", s.device_name, s.backups.len())
             }
             DaemonResponse::BackupRootName(name) => write!(f, "{}", name),
         }
@@ -1071,7 +1065,7 @@ mod tests {
 
     #[test]
     fn test_backup_response_roundtrip() {
-        use crate::wrapper::{BackupEvent, BackupInfo, BackupStatusInfo};
+        use crate::wrapper::{BackupInfo, BackupStatusInfo};
         use std::path::PathBuf;
 
         let info = BackupInfo {
@@ -1084,13 +1078,6 @@ mod tests {
         let status = BackupStatusInfo {
             device_name: "host".to_string(),
             backups: vec![info.clone()],
-            recent_events: vec![BackupEvent {
-                kind: 401,
-                kind_str: "backup-stopped".to_string(),
-                path: None,
-                sync_id: None,
-                timestamp: 0,
-            }],
         };
 
         let responses = vec![

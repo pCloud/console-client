@@ -330,9 +330,6 @@ fn run_foreground_mode(cli: Cli, env_secrets: ResolvedSecrets) -> Result<()> {
     print_status(StatusIndicator::Info, "Initializing pCloud client...");
     let client = PCloudClient::init()?;
 
-    // Install engine-level callbacks (backup events ring buffer, etc.)
-    console_client::daemon::init_engine_callbacks();
-
     // 2. Set up status callback for progress reporting
     register_status_callback(|status| {
         let status_str = status_to_string(status.status);
@@ -801,12 +798,6 @@ fn handle_backup_status_foreground(client: &Arc<Mutex<PCloudClient>>, id: Option
                     b.remote_path
                 );
             }
-            if !s.recent_events.is_empty() {
-                println!("Recent events:");
-                for ev in &s.recent_events {
-                    println!("  {} (kind={})", ev.kind_str, ev.kind);
-                }
-            }
         }
         Err(e) => eprintln!("Error: {}", e),
     }
@@ -970,9 +961,6 @@ fn run_daemon_mode(cli: Cli, env_secrets: ResolvedSecrets) -> Result<()> {
     // Initialize client early to check for saved credentials
     print_status(StatusIndicator::Info, "Initializing pCloud client...");
     let client = PCloudClient::init()?;
-
-    // Install engine-level callbacks (backup events ring buffer, etc.)
-    console_client::daemon::init_engine_callbacks();
 
     // Determine authentication method and whether to save the token
     let (auth_token, save_token) = {
@@ -1356,12 +1344,6 @@ fn print_daemon_response(response: &console_client::daemon::DaemonResponse) {
                     b.local_path.display(),
                     b.remote_path
                 );
-            }
-            if !s.recent_events.is_empty() {
-                println!("Recent events:");
-                for ev in &s.recent_events {
-                    println!("  {} (kind={})", ev.kind_str, ev.kind);
-                }
             }
         }
         DaemonResponse::BackupRootName(name) => println!("{}", name),

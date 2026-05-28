@@ -86,10 +86,7 @@ mod filesystem;
 pub mod weblogin;
 
 // Re-export the main types
-pub use backup::{
-    ensure_backup_events_registered, recent_backup_events, BackupEvent, BackupId, BackupInfo,
-    BackupStatusInfo,
-};
+pub use backup::{BackupId, BackupInfo, BackupStatusInfo};
 pub use client::{AuthState, CryptoState, PCloudClient};
 pub use filesystem::{SyncFolder, SyncType};
 pub use weblogin::{WebLoginConfig, WebLoginSession};

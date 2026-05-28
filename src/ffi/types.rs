@@ -380,27 +380,6 @@ pub const BEAPI_ERR_NO_DL_LINK_IN_BUP: c_int = 2343;
 /// BEAPI error: this item can't be placed in a backup folder.
 pub const BEAPI_ERR_NOT_ALLOWED_IN_BUP: c_int = 2346;
 
-// Backup-specific event types (per pclsync/psynclib.h:1704-1707).
-/// Event: a backup was stopped.
-pub const PEVENT_BACKUP_STOP: u32 = 401;
-/// Event: an object inside a backup was deleted.
-pub const PEVENT_BKUP_OBJ_DEL: u32 = 402;
-/// Event: an object in a regular sync was deleted (reported via backup events).
-pub const PEVENT_SYNC_OBJ_DEL: u32 = 403;
-/// Event: a backup folder was deleted from Drive.
-pub const PEVENT_BKUP_F_DEL_DRIVE: u32 = 404;
-
-/// Convert a backup event code to a short human-readable name.
-pub fn backup_event_to_string(event: u32) -> &'static str {
-    match event {
-        PEVENT_BACKUP_STOP => "backup-stopped",
-        PEVENT_BKUP_OBJ_DEL => "backup-object-deleted",
-        PEVENT_SYNC_OBJ_DEL => "sync-object-deleted",
-        PEVENT_BKUP_F_DEL_DRIVE => "backup-folder-deleted-from-drive",
-        _ => "unknown-backup-event",
-    }
-}
-
 // ============================================================================
 // Helper Functions
 // ============================================================================
@@ -520,27 +499,5 @@ mod tests {
     fn test_backup_constants() {
         assert_eq!(PSYNC_BACKUPS, 7);
         assert_eq!(PSYNC_BACKUP_PATH_EMPTY_ERR, 11001);
-        assert_eq!(PEVENT_BACKUP_STOP, 401);
-        assert_eq!(PEVENT_BKUP_OBJ_DEL, 402);
-        assert_eq!(PEVENT_SYNC_OBJ_DEL, 403);
-        assert_eq!(PEVENT_BKUP_F_DEL_DRIVE, 404);
-    }
-
-    #[test]
-    fn test_backup_event_to_string() {
-        assert_eq!(backup_event_to_string(PEVENT_BACKUP_STOP), "backup-stopped");
-        assert_eq!(
-            backup_event_to_string(PEVENT_BKUP_OBJ_DEL),
-            "backup-object-deleted"
-        );
-        assert_eq!(
-            backup_event_to_string(PEVENT_SYNC_OBJ_DEL),
-            "sync-object-deleted"
-        );
-        assert_eq!(
-            backup_event_to_string(PEVENT_BKUP_F_DEL_DRIVE),
-            "backup-folder-deleted-from-drive"
-        );
-        assert_eq!(backup_event_to_string(0), "unknown-backup-event");
     }
 }

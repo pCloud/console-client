@@ -2,8 +2,7 @@
 //!
 //! This module wraps the pclsync backup API (`psync_create_backup`,
 //! `psync_delete_backup`, `psync_stop_device`, `get_backup_root_name`,
-//! `psync_get_syncs_bytype`, `psync_register_backup_events_callback`) in
-//! safe Rust methods on [`PCloudClient`].
+//! `psync_get_syncs_bytype`) in safe Rust methods on [`PCloudClient`].
 //!
 //! Unlike regular sync folders, backups are created via a dedicated
 //! `psync_create_backup` entry point and surfaced via
@@ -27,28 +26,18 @@
 //! guard.delete_backup(id)?;
 //! ```
 
-use std::collections::VecDeque;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, Once};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::{BackupError, FfiError, PCloudError, Result};
-use crate::ffi::callbacks;
 use crate::ffi::raw;
-use crate::ffi::types::{
-    backup_event_to_string, psync_eventdata_t, psync_eventtype_t, psync_folder_list_t,
-    PSYNC_BACKUPS,
-};
+use crate::ffi::types::{psync_folder_list_t, PSYNC_BACKUPS};
 use crate::utils::cstring::{from_cstr_and_free, try_to_cstring};
 
 use super::client::PCloudClient;
-
-/// Maximum number of backup events held in the in-memory ring buffer.
-const EVENT_RING_CAP: usize = 32;
 
 /// Strongly typed wrapper around a backup sync id.
 ///
@@ -78,26 +67,6 @@ pub struct BackupInfo {
     pub folder_id: u64,
 }
 
-/// A backup-related event reported by pclsync.
-///
-/// The C event-data union is intentionally not decoded yet — `path` and
-/// `sync_id` are best-effort populated only when the trampoline has enough
-/// safe context. The `timestamp` is a Unix epoch second when the event was
-/// observed by the Rust trampoline, not when the C library generated it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BackupEvent {
-    /// Raw event code (see `PEVENT_BACKUP_*` constants).
-    pub kind: u32,
-    /// Human-readable event kind.
-    pub kind_str: String,
-    /// Optional path associated with the event.
-    pub path: Option<String>,
-    /// Optional sync id associated with the event.
-    pub sync_id: Option<u32>,
-    /// Unix epoch seconds when the trampoline observed the event.
-    pub timestamp: u64,
-}
-
 /// Status summary for backups on the current device.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackupStatusInfo {
@@ -105,85 +74,6 @@ pub struct BackupStatusInfo {
     pub device_name: String,
     /// Backups visible right now (filtered if a sync id was supplied).
     pub backups: Vec<BackupInfo>,
-    /// Snapshot of the most recent backup events seen by this process.
-    pub recent_events: Vec<BackupEvent>,
-}
-
-/// In-memory ring buffer of the most recent backup events.
-static BACKUP_EVENT_RING: Mutex<VecDeque<BackupEvent>> = Mutex::new(VecDeque::new());
-
-/// Ensure the backup-events callback is registered exactly once per process.
-static BACKUP_EVENT_REGISTER: Once = Once::new();
-
-fn push_event(ev: BackupEvent) {
-    if let Ok(mut guard) = BACKUP_EVENT_RING.lock() {
-        while guard.len() >= EVENT_RING_CAP {
-            guard.pop_front();
-        }
-        guard.push_back(ev);
-    }
-}
-
-fn now_unix_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
-
-/// Build a [`BackupEvent`] from a raw `pevent_callback_t` invocation.
-///
-/// We treat the union as opaque on purpose: backup event-data layouts are
-/// not all exercised in this codebase yet, and decoding them unsafely from
-/// a callback thread is easy to get wrong. Once we have end-to-end tests
-/// we can enrich this with `path`/`sync_id` extraction.
-fn make_event(kind: psync_eventtype_t, _data: psync_eventdata_t) -> BackupEvent {
-    BackupEvent {
-        kind,
-        kind_str: backup_event_to_string(kind).to_string(),
-        path: None,
-        sync_id: None,
-        timestamp: now_unix_secs(),
-    }
-}
-
-/// Take a snapshot of the recent backup events ring buffer.
-pub fn recent_backup_events() -> Vec<BackupEvent> {
-    BACKUP_EVENT_RING
-        .lock()
-        .map(|guard| guard.iter().cloned().collect())
-        .unwrap_or_default()
-}
-
-/// Idempotently register the backup-events callback with the C library.
-///
-/// Safe to call from anywhere; subsequent calls are no-ops thanks to
-/// [`std::sync::Once`].
-///
-/// # Note
-///
-/// `psync_register_backup_events_callback` is declared in `psynclib.h` but
-/// its implementation is currently missing from the upstream pclsync C
-/// source. We still install the Rust-side closure into
-/// `ffi::callbacks::BACKUP_EVENT_CALLBACK` so the trampoline is wired and
-/// ready: if pclsync ever ships the symbol, restoring the FFI call site
-/// is a one-line change. Until then `recent_backup_events()` will return
-/// an empty snapshot in production.
-pub fn ensure_backup_events_registered() {
-    BACKUP_EVENT_REGISTER.call_once(|| {
-        callbacks::register_backup_event_callback(|kind, data| {
-            push_event(make_event(kind, data));
-        });
-        // TODO: re-enable once pclsync ships psync_register_backup_events_callback
-        // (declared at pclsync/psynclib.h:1557 but currently undefined). When
-        // restored, the call below installs the trampoline.
-        //
-        //     unsafe {
-        //         raw::psync_register_backup_events_callback(Some(
-        //             callbacks::backup_event_callback_trampoline,
-        //         ));
-        //     }
-    });
 }
 
 /// SAFETY: helper that copies a C string into Rust if non-null.
@@ -385,7 +275,6 @@ impl PCloudClient {
         Ok(BackupStatusInfo {
             device_name,
             backups,
-            recent_events: recent_backup_events(),
         })
     }
 }
@@ -422,46 +311,5 @@ mod tests {
         assert_eq!(back.local_path, PathBuf::from("/home/user/docs"));
         assert_eq!(back.remote_path, "/Backups/host/docs");
         assert_eq!(back.folder_id, 99);
-    }
-
-    #[test]
-    fn test_backup_event_serde_roundtrip() {
-        let ev = BackupEvent {
-            kind: 401,
-            kind_str: "backup-stopped".to_string(),
-            path: Some("/x".to_string()),
-            sync_id: Some(5),
-            timestamp: 1_700_000_000,
-        };
-        let bytes = bincode::serialize(&ev).expect("serialize");
-        let back: BackupEvent = bincode::deserialize(&bytes).expect("deserialize");
-        assert_eq!(back.kind, 401);
-        assert_eq!(back.kind_str, "backup-stopped");
-        assert_eq!(back.path, Some("/x".to_string()));
-        assert_eq!(back.sync_id, Some(5));
-        assert_eq!(back.timestamp, 1_700_000_000);
-    }
-
-    #[test]
-    fn test_recent_backup_events_initially_empty_or_buffered() {
-        // We can't assert "empty" because other tests in the suite may push
-        // events; just verify the call is safe and returns a Vec.
-        let _ = recent_backup_events();
-    }
-
-    #[test]
-    fn test_push_event_caps_ring_buffer() {
-        // Drain whatever is there first by overflowing past the cap.
-        for i in 0..(EVENT_RING_CAP * 2) {
-            push_event(BackupEvent {
-                kind: 401,
-                kind_str: "backup-stopped".to_string(),
-                path: None,
-                sync_id: Some(i as u32),
-                timestamp: now_unix_secs(),
-            });
-        }
-        let snapshot = recent_backup_events();
-        assert!(snapshot.len() <= EVENT_RING_CAP);
     }
 }
