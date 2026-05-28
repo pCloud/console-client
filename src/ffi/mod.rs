@@ -147,7 +147,9 @@ pub use types::{
 
 // Re-export commonly used items from callbacks module
 pub use callbacks::{
+    backup_event_callback_trampoline,
     clear_all_callbacks,
+    clear_backup_event_callback,
     clear_event_callback,
     clear_fs_start_callback,
     clear_notification_callback,
@@ -156,6 +158,7 @@ pub use callbacks::{
     event_callback_trampoline,
     fs_start_callback_trampoline,
     notification_callback_trampoline,
+    register_backup_event_callback,
     register_event_callback,
     register_fs_start_callback,
     register_notification_callback,

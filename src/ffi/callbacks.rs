@@ -125,6 +125,12 @@ static NOTIFICATION_CALLBACK: Mutex<Option<NotificationCallbackFn>> = Mutex::new
 /// Global storage for the filesystem start callback.
 static FS_START_CALLBACK: Mutex<Option<GenericCallbackFn>> = Mutex::new(None);
 
+/// Global storage for the backup events callback.
+///
+/// Separate from `EVENT_CALLBACK` so the regular event callback (if any)
+/// does not fire on backup events.
+static BACKUP_EVENT_CALLBACK: Mutex<Option<EventCallbackFn>> = Mutex::new(None);
+
 // ============================================================================
 // Trampoline Functions (extern "C")
 // ============================================================================
@@ -218,6 +224,32 @@ pub unsafe extern "C" fn fs_start_callback_trampoline() {
         let guard = lock_or_recover(&FS_START_CALLBACK);
         if let Some(ref callback) = *guard {
             callback();
+        }
+    });
+}
+
+/// Backup events callback trampoline.
+///
+/// This function is called from the pclsync C library when a backup-specific
+/// event fires (the events registered via `psync_register_backup_events_callback`).
+/// It routes to a dedicated `BACKUP_EVENT_CALLBACK` slot so the regular event
+/// callback registered via `psync_start_sync` remains independent.
+///
+/// # Safety
+///
+/// This function is called from C code and must:
+/// - Not panic (uses `catch_unwind`)
+/// - Handle the event data union carefully
+/// - Not store pointers from `event_data` beyond callback duration
+#[no_mangle]
+pub unsafe extern "C" fn backup_event_callback_trampoline(
+    event_type: psync_eventtype_t,
+    event_data: psync_eventdata_t,
+) {
+    let _ = panic::catch_unwind(|| {
+        let guard = lock_or_recover(&BACKUP_EVENT_CALLBACK);
+        if let Some(ref callback) = *guard {
+            callback(event_type, event_data);
         }
     });
 }
@@ -325,6 +357,34 @@ where
     *guard = Some(Box::new(callback));
 }
 
+/// Register a backup events callback.
+///
+/// The callback will be invoked for backup-related events such as
+/// `PEVENT_BACKUP_STOP`, `PEVENT_BKUP_OBJ_DEL`, `PEVENT_SYNC_OBJ_DEL`,
+/// and `PEVENT_BKUP_F_DEL_DRIVE`. The previous callback (if any) is replaced.
+///
+/// # Arguments
+///
+/// * `callback` - The callback function to register. Must be `Send + 'static`.
+///
+/// # Thread Safety
+///
+/// This function is thread-safe. The callback will be called from the
+/// pclsync callback thread, separately from the regular event callback.
+///
+/// # Note
+///
+/// You still need to call
+/// `raw::psync_register_backup_events_callback(Some(backup_event_callback_trampoline))`
+/// once per process to wire the trampoline into the C library.
+pub fn register_backup_event_callback<F>(callback: F)
+where
+    F: Fn(psync_eventtype_t, psync_eventdata_t) + Send + 'static,
+{
+    let mut guard = lock_or_recover(&BACKUP_EVENT_CALLBACK);
+    *guard = Some(Box::new(callback));
+}
+
 /// Register a filesystem start callback.
 ///
 /// The callback will be invoked when the virtual filesystem starts.
@@ -383,6 +443,14 @@ pub fn clear_fs_start_callback() {
     *guard = None;
 }
 
+/// Clear the registered backup events callback.
+///
+/// After calling this, backup events will not trigger any callback.
+pub fn clear_backup_event_callback() {
+    let mut guard = lock_or_recover(&BACKUP_EVENT_CALLBACK);
+    *guard = None;
+}
+
 /// Clear all registered callbacks.
 ///
 /// This is useful for cleanup or when reinitializing the library.
@@ -391,6 +459,7 @@ pub fn clear_all_callbacks() {
     clear_event_callback();
     clear_notification_callback();
     clear_fs_start_callback();
+    clear_backup_event_callback();
 }
 
 // ============================================================================
@@ -879,12 +948,14 @@ mod tests {
         register_event_callback(|_, _| {});
         register_notification_callback(|_, _| {});
         register_fs_start_callback(|| {});
+        register_backup_event_callback(|_, _| {});
 
         // Verify all are registered
         assert!(lock_or_recover(&STATUS_CALLBACK).is_some());
         assert!(lock_or_recover(&EVENT_CALLBACK).is_some());
         assert!(lock_or_recover(&NOTIFICATION_CALLBACK).is_some());
         assert!(lock_or_recover(&FS_START_CALLBACK).is_some());
+        assert!(lock_or_recover(&BACKUP_EVENT_CALLBACK).is_some());
 
         // Clear all
         clear_all_callbacks();
@@ -894,6 +965,39 @@ mod tests {
         assert!(lock_or_recover(&EVENT_CALLBACK).is_none());
         assert!(lock_or_recover(&NOTIFICATION_CALLBACK).is_none());
         assert!(lock_or_recover(&FS_START_CALLBACK).is_none());
+        assert!(lock_or_recover(&BACKUP_EVENT_CALLBACK).is_none());
+    }
+
+    #[test]
+    fn test_backup_event_callback_registration() {
+        let called = Arc::new(AtomicU32::new(0));
+        let called_clone = Arc::clone(&called);
+
+        register_backup_event_callback(move |event_type, _event_data| {
+            called_clone.store(event_type, Ordering::SeqCst);
+        });
+
+        // Verify callback is stored
+        {
+            let guard = lock_or_recover(&BACKUP_EVENT_CALLBACK);
+            assert!(guard.is_some());
+        }
+
+        // Invoke the trampoline directly with synthetic data
+        let data = crate::ffi::types::psync_eventdata_t {
+            file: std::ptr::null_mut(),
+        };
+        unsafe {
+            backup_event_callback_trampoline(401, data);
+        }
+        assert_eq!(called.load(Ordering::SeqCst), 401);
+
+        // Clean up
+        clear_backup_event_callback();
+        {
+            let guard = lock_or_recover(&BACKUP_EVENT_CALLBACK);
+            assert!(guard.is_none());
+        }
     }
 
     #[test]
