@@ -56,7 +56,8 @@ src/
 |   |-- client.rs        # Main PCloudClient struct
 |   |-- auth.rs          # Authentication operations
 |   |-- crypto.rs        # Crypto folder operations
-|   +-- filesystem.rs    # Mount/unmount, sync folders
+|   |-- filesystem.rs    # Mount/unmount, sync folders
+|   +-- backup.rs        # Backup CRUD, status, events ring buffer
 |
 |-- daemon/              # Background daemon functionality
 |   |-- mod.rs           # Re-exports, init function
@@ -475,6 +476,12 @@ let err = FilesystemError::from_code(code);
 - `StopCrypto` - Stop crypto
 - `Finalize` - Sync and shutdown
 - `Quit` - Immediate shutdown
+- `BackupCreate { path }` - Register a local folder as a backup
+- `BackupRemove { sync_id }` - Remove a backup by sync id
+- `BackupStopDevice` - Stop all backups on the current device
+- `BackupList` - List configured backups for the current device
+- `BackupStatus { sync_id }` - Backup status (optional sync id filter)
+- `BackupRootName` - Return the backup root folder name
 
 ### Responses (DaemonResponse)
 
@@ -483,6 +490,26 @@ let err = FilesystemError::from_code(code);
 - `Error(String)` - Command failed
 - `Status { authenticated, crypto_started, mounted, mountpoint }` - Status info
 - `Pong` - Response to Ping
+- `BackupCreated { sync_id }` - Response to `BackupCreate`
+- `BackupList(Vec<BackupInfo>)` - Response to `BackupList`
+- `BackupStatus(BackupStatusInfo)` - Response to `BackupStatus`
+- `BackupRootName(String)` - Response to `BackupRootName`
+
+### Backup CLI surface
+
+```
+pcloud backup add <PATH>      # register a folder as a backup
+pcloud backup list            # list backups for this device
+pcloud backup remove <ID>     # remove a backup by sync id
+pcloud backup stop-device     # stop all backups on this device
+pcloud backup status [<ID>]   # status summary (optional sync id filter)
+pcloud backup root-name       # print the backup root folder name
+```
+
+When `pcloud backup ...` runs and no daemon is alive on the per-UID socket,
+`main::run_backup_subcommand` auto-starts a headless `pcloud -d` (no `-m`)
+**only if** saved credentials exist on the local DB. Otherwise it errors
+out with a hint to run `pcloud -u <email> -p` first.
 
 ## Debugging Tips
 
