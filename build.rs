@@ -2,21 +2,28 @@
 //!
 //! This script:
 //! - Detects the target platform (Linux/macOS)
-//! - Compiles all pclsync .c source files
-//! - Links required system libraries (fuse, sqlite3, pthread, openssl, zlib)
+//! - Compiles the vendored SQLite amalgamation (`vendor/sqlite/sqlite3.c`)
+//!   into its own static archive (`libsqlite3.a`)
+//! - Compiles all pclsync .c source files into `libpclsync.a`
+//! - Links required system libraries (fuse, pthread, openssl, zlib, udev)
 //! - Sets up include paths for C headers
 //! - Generates Rust bindings for C structs using bindgen
+//! - Emits linker flags so the final binary can dead-strip unused C code
+//!   (`-Wl,--gc-sections` on Linux, `-Wl,-dead_strip` on macOS)
+//!
+//! SQLite is vendored — there is no runtime or build-time dependency on the
+//! host's libsqlite3. To bump the SQLite version, use `tools/update-sqlite.sh`.
 //!
 //! # Required System Dependencies
 //!
 //! ## Linux (Debian/Ubuntu)
 //! ```bash
-//! sudo apt-get install libfuse-dev libsqlite3-dev libssl-dev zlib1g-dev libclang-dev
+//! sudo apt-get install libfuse-dev libssl-dev zlib1g-dev libclang-dev
 //! ```
 //!
 //! ## Linux (Fedora/RHEL)
 //! ```bash
-//! sudo dnf install fuse-devel sqlite-devel openssl-devel zlib-devel clang-devel
+//! sudo dnf install fuse-devel openssl-devel zlib-devel clang-devel
 //! ```
 //!
 //! ## macOS
@@ -25,12 +32,15 @@
 //! ```
 
 use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 fn main() {
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
-    let pclsync_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("pclsync");
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    let pclsync_dir = manifest_dir.join("pclsync");
+    let sqlite_dir = manifest_dir.join("vendor").join("sqlite");
 
     // Verify pclsync directory exists
     if !pclsync_dir.exists() {
@@ -41,7 +51,11 @@ fn main() {
         );
     }
 
-    // Configure the C compiler
+    // Verify vendored SQLite is present and matches its VERSION file.
+    let sqlite_version = check_vendored_sqlite_version(&sqlite_dir);
+    println!("cargo:rustc-env=SQLITE_VENDORED_VERSION={}", sqlite_version);
+
+    // Configure the C compiler for pclsync
     let mut build = cc::Build::new();
 
     // Common compiler flags
@@ -52,10 +66,17 @@ fn main() {
         .opt_level(2)
         .flag_if_supported("-fno-stack-protector")
         .flag_if_supported("-fomit-frame-pointer")
+        // Per-function/data sections so the final binary link can
+        // `--gc-sections` away pclsync code that pclsync doesn't actually use.
+        .flag_if_supported("-ffunction-sections")
+        .flag_if_supported("-fdata-sections")
         // GCC 14+ compiler demotion of certain warnings.
         .flag_if_supported("-Wno-error=int-conversion")
         .flag_if_supported("-Wno-error=incompatible-pointer-types")
         .define("PSYNC_DEFAULT_POSIX_DIR", "\".pcloud-cli\"");
+
+    // Make pclsync `#include <sqlite3.h>` resolve to the vendored copy first.
+    build.include(&sqlite_dir);
 
     // Set DEBUG_LEVEL for debug builds (D_NOTICE = 50)
     let profile = env::var("PROFILE").unwrap_or_default();
@@ -125,6 +146,14 @@ fn main() {
         "pdevice_monitor.c",
         "ptools.c",
         "miniz.c",
+        // Added with pclsync 2.26.05.2: split-out utility modules and the
+        // document-editing subsystem (now referenced unconditionally from
+        // psynclib.c).
+        "pstrings.c",
+        "pencoding.c",
+        "pdevicemap.c",
+        "pdocument_editing.c",
+        "pqsort.c",
     ];
 
     // Add filesystem source files (from Makefile OBJFS)
@@ -155,14 +184,40 @@ fn main() {
     // Compile the library
     build.compile("pclsync");
 
+    // Compile the vendored SQLite amalgamation into its own static archive.
+    //
+    // This MUST come *after* `build.compile("pclsync")`: with a single-pass
+    // static linker, an archive only resolves undefined references that appear
+    // before it on the command line. `cc::Build::compile` emits its
+    // `cargo:rustc-link-lib=static=...` directive in call order, so compiling
+    // SQLite second yields `-lpclsync ... -lsqlite3`. pclsync references
+    // `sqlite3_*` symbols (e.g. `sqlite3_db_release_memory` in plibs.c) and
+    // SQLite references nothing in pclsync, so this is the correct order.
+    // Building SQLite first produced `-lsqlite3 ... -lpclsync`, which only
+    // happened to link on x86_64 because `--gc-sections` dropped the
+    // referencing pclsync section; the aarch64 test binary kept it and failed
+    // with an undefined reference. The archive only needs to exist for the
+    // final rustc link (after build.rs finishes), so compiling it here is fine.
+    compile_sqlite(&sqlite_dir);
+
     // Link system libraries
     link_system_libraries(&target_os);
+
+    // Ask the linker to drop unreferenced sections from the final binary. This
+    // pairs with `-ffunction-sections -fdata-sections` on both C builds and is
+    // what gives us "tree-shaking" of unused SQLite (and pclsync) code.
+    match target_os.as_str() {
+        "linux" => println!("cargo:rustc-link-arg=-Wl,--gc-sections"),
+        "macos" => println!("cargo:rustc-link-arg=-Wl,-dead_strip"),
+        _ => {}
+    }
 
     // Generate bindings using bindgen
     generate_bindings(&pclsync_dir, &out_dir, &target_os);
 
     // Tell Cargo to rerun this script if pclsync sources change
     println!("cargo:rerun-if-changed=pclsync/");
+    println!("cargo:rerun-if-changed=vendor/sqlite/");
     println!("cargo:rerun-if-changed=build.rs");
 
     // Emit PCLOUD_VERSION with profile suffix
@@ -361,18 +416,8 @@ fn configure_linux(build: &mut cc::Build, _pclsync_dir: &PathBuf) {
     // Note: poverlay_lin.c is included via #include in poverlay.c,
     // so we don't compile it separately
 
-    // Try to find SQLite3 include path using pkg-config
-    match pkg_config::Config::new().probe("sqlite3") {
-        Ok(sqlite) => {
-            for include in &sqlite.include_paths {
-                build.include(include);
-            }
-        }
-        Err(e) => {
-            eprintln!("Warning: pkg-config failed to find sqlite3: {}", e);
-            eprintln!("Hint: Install libsqlite3-dev (Debian/Ubuntu) or sqlite-devel (Fedora/RHEL)");
-        }
-    }
+    // SQLite is vendored at vendor/sqlite/; its include path is wired up in
+    // main() and the static archive is built by compile_sqlite().
 
     // Try to find FUSE include path using pkg-config
     if let Ok(fuse) = pkg_config::Config::new().probe("fuse") {
@@ -411,6 +456,9 @@ fn configure_macos(build: &mut cc::Build, _pclsync_dir: &PathBuf) {
 
     // Note: poverlay_mac.c is included via #include in poverlay.c,
     // so we don't compile it separately
+
+    // SQLite is vendored at vendor/sqlite/; its include path is wired up in
+    // main() and the static archive is built by compile_sqlite().
 
     // Try to find OpenSSL include path using pkg-config
     if let Ok(openssl) = pkg_config::Config::new().probe("openssl") {
@@ -461,9 +509,10 @@ fn configure_macos(build: &mut cc::Build, _pclsync_dir: &PathBuf) {
 fn link_system_libraries(target_os: &str) {
     match target_os {
         "linux" => {
-            // Use pkg-config to find libraries when available
+            // Use pkg-config to find libraries when available.
+            // (SQLite is vendored — compile_sqlite() already emits its
+            // own static-link directive.)
             link_with_pkgconfig_or_fallback("fuse", "fuse");
-            link_with_pkgconfig_or_fallback("sqlite3", "sqlite3");
             link_with_pkgconfig_or_fallback("openssl", "ssl");
             // OpenSSL needs both libssl and libcrypto
             if pkg_config::Config::new().probe("openssl").is_err() {
@@ -492,8 +541,8 @@ fn link_system_libraries(target_os: &str) {
             println!("cargo:rustc-link-search=/usr/local/lib");
             println!("cargo:rustc-link-search=/opt/homebrew/lib");
 
-            // SQLite3 — use system SQLite (always available on macOS)
-            println!("cargo:rustc-link-lib=sqlite3");
+            // SQLite is vendored — compile_sqlite() already emits its own
+            // static-link directive.
 
             // OpenSSL 3.x
             if pkg_config::Config::new().probe("openssl").is_err() {
@@ -517,8 +566,8 @@ fn link_system_libraries(target_os: &str) {
         }
         _ => {
             // Fallback: try to link common libraries
+            // (SQLite is vendored; not listed here.)
             println!("cargo:rustc-link-lib=fuse");
-            println!("cargo:rustc-link-lib=sqlite3");
             println!("cargo:rustc-link-lib=ssl");
             println!("cargo:rustc-link-lib=crypto");
             println!("cargo:rustc-link-lib=udev");
@@ -537,4 +586,116 @@ fn link_with_pkgconfig_or_fallback(pkg_name: &str, lib_name: &str) {
     {
         println!("cargo:rustc-link-lib={}", lib_name);
     }
+}
+
+/// Read `vendor/sqlite/VERSION` and cross-check against the `SQLITE_VERSION`
+/// macro in `vendor/sqlite/sqlite3.h`. Panics with a clear message if the
+/// vendored sources are missing, or if the two strings disagree.
+///
+/// Returns the version string from `VERSION` for use as a build-env value.
+fn check_vendored_sqlite_version(sqlite_dir: &Path) -> String {
+    let version_path = sqlite_dir.join("VERSION");
+    let header_path = sqlite_dir.join("sqlite3.h");
+    let source_path = sqlite_dir.join("sqlite3.c");
+
+    for required in [&version_path, &header_path, &source_path] {
+        if !required.exists() {
+            panic!(
+                "Vendored SQLite source missing at {:?}. \
+                 Run `tools/update-sqlite.sh <version>` to install it.",
+                required
+            );
+        }
+    }
+
+    let pinned = fs::read_to_string(&version_path)
+        .unwrap_or_else(|e| panic!("Failed to read {:?}: {}", version_path, e))
+        .trim()
+        .to_string();
+
+    let header = fs::read_to_string(&header_path)
+        .unwrap_or_else(|e| panic!("Failed to read {:?}: {}", header_path, e));
+
+    // Look for `#define SQLITE_VERSION  "X.Y.Z"`.
+    let header_version = header.lines().find_map(|line| {
+        let line = line.trim_start();
+        let rest = line.strip_prefix("#define")?.trim_start();
+        let rest = rest.strip_prefix("SQLITE_VERSION")?;
+        // Must be followed by whitespace, not `_NUMBER`, `_SOURCE_ID`, etc.
+        let rest = rest.strip_prefix(|c: char| c.is_whitespace())?;
+        let rest = rest.trim_start();
+        let rest = rest.strip_prefix('"')?;
+        let end = rest.find('"')?;
+        Some(rest[..end].to_string())
+    });
+
+    let header_version = header_version.unwrap_or_else(|| {
+        panic!(
+            "Could not find `#define SQLITE_VERSION \"...\"` in {:?}",
+            header_path
+        )
+    });
+
+    if pinned != header_version {
+        panic!(
+            "Vendored SQLite version mismatch: VERSION says {:?} but \
+             sqlite3.h says {:?}. Either fix vendor/sqlite/VERSION or \
+             re-run tools/update-sqlite.sh.",
+            pinned, header_version
+        );
+    }
+
+    println!("cargo:rerun-if-changed={}", version_path.display());
+    println!("cargo:rerun-if-changed={}", header_path.display());
+
+    pinned
+}
+
+/// Compile the vendored SQLite amalgamation into a standalone static archive.
+///
+/// `cc::Build::compile("sqlite3")` writes `libsqlite3.a` into `$OUT_DIR` and
+/// emits `cargo:rustc-link-lib=static=sqlite3` so the Rust binary links it.
+///
+/// Flag rationale:
+/// - `SQLITE_THREADSAFE=1` — required; pclsync checks `sqlite3_threadsafe()`
+///   at runtime in `pclsync/plibs.c` and opens the DB with `FULLMUTEX`.
+/// - `ENABLE_COLUMN_METADATA`, `SECURE_DELETE` — small wins; the latter is
+///   worthwhile because pclsync stores encrypted folder/file keys.
+/// - The `OMIT_*` family removes APIs pclsync never calls (audited:
+///   `pclsync/pdatabase.h`, `pclsync/plibs.c`).
+/// - `-ffunction-sections -fdata-sections` puts each function/data symbol in
+///   its own ELF section, so the final binary link can `--gc-sections` away
+///   anything unreferenced.
+/// - `opt_level(2)` + `NDEBUG` are unconditional: SQLite is ~9 MB of C, and
+///   we don't want a 30 s debug build cost every time `cargo build` runs.
+fn compile_sqlite(sqlite_dir: &Path) {
+    let mut build = cc::Build::new();
+    build
+        .file(sqlite_dir.join("sqlite3.c"))
+        .warnings(false)
+        .opt_level(2)
+        .define("NDEBUG", None)
+        // Required
+        .define("SQLITE_THREADSAFE", "1")
+        .define("HAVE_USLEEP", "1")
+        // Modest enables
+        .define("SQLITE_ENABLE_COLUMN_METADATA", None)
+        .define("SQLITE_SECURE_DELETE", None)
+        // Size/security trims — pclsync uses none of these
+        .define("SQLITE_OMIT_LOAD_EXTENSION", None)
+        .define("SQLITE_OMIT_DEPRECATED", None)
+        .define("SQLITE_OMIT_SHARED_CACHE", None)
+        .define("SQLITE_OMIT_AUTHORIZATION", None)
+        .define("SQLITE_OMIT_PROGRESS_CALLBACK", None)
+        .define("SQLITE_OMIT_TRACE", None)
+        .define("SQLITE_OMIT_UTF16", None)
+        // Default tweaks
+        .define("SQLITE_DEFAULT_MEMSTATUS", "0")
+        .define("SQLITE_DEFAULT_WAL_SYNCHRONOUS", "1")
+        .define("SQLITE_MAX_EXPR_DEPTH", "0")
+        // Tree-shaking enablers (paired with --gc-sections / -dead_strip)
+        .flag_if_supported("-ffunction-sections")
+        .flag_if_supported("-fdata-sections");
+
+    build.compile("sqlite3");
 }

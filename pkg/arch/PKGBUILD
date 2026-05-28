@@ -6,7 +6,7 @@ pkgdesc="pCloud console client — FUSE-based virtual drive with Crypto folder s
 arch=('x86_64' 'aarch64' 'armv7h')
 url="https://www.pcloud.com"
 license=('BSD-3-Clause')
-depends=('fuse2' 'sqlite' 'openssl' 'zlib' 'systemd-libs')
+depends=('fuse2' 'openssl' 'zlib' 'systemd-libs')
 makedepends=('rust' 'cargo' 'clang' 'pkgconf' 'git')
 source=("${pkgname}::git+https://github.com/pCloud/console-client.git#tag=v${pkgver//.preview/-preview}")
 sha256sums=('SKIP')

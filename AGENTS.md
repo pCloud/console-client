@@ -87,19 +87,24 @@ src/
 
 ```bash
 # Debian/Ubuntu
-sudo apt-get install build-essential libfuse-dev libsqlite3-dev \
-  libssl-dev libudev-dev libclang-dev
+sudo apt-get install build-essential libfuse-dev \
+  libssl-dev zlib1g-dev libudev-dev libclang-dev
 
 # Fedora/RHEL
-sudo dnf install gcc fuse-devel sqlite-devel openssl-devel \
-  systemd-devel clang-devel
+sudo dnf install gcc fuse-devel openssl-devel \
+  zlib-devel systemd-devel clang-devel
 
 # Arch Linux
-sudo pacman -S base-devel fuse2 sqlite openssl systemd-libs clang
+sudo pacman -S base-devel fuse2 openssl zlib systemd-libs clang
 
 # macOS
-brew install macfuse sqlite openssl llvm
+brew install macfuse openssl@3 llvm
 ```
+
+Note: SQLite is **not** a build-time or runtime dependency. The SQLite
+amalgamation is vendored in-tree at `vendor/sqlite/` and compiled into the
+binary as a static library (`libsqlite3.a`). To bump the SQLite version,
+use `tools/update-sqlite.sh <version>`.
 
 ### Build Commands
 
@@ -123,10 +128,12 @@ cargo install --path .
 ### Build System (build.rs)
 
 The build script:
-1. Compiles all pclsync C source files using the `cc` crate
-2. Links system libraries (fuse, sqlite3, openssl, udev, pthread)
-3. Generates Rust bindings for C structs using `bindgen`
-4. Detects platform (Linux/macOS) for conditional compilation
+1. Compiles the vendored SQLite amalgamation (`vendor/sqlite/sqlite3.c`) into a standalone static archive (`libsqlite3.a`) with a fixed feature set (see `compile_sqlite()` in `build.rs`)
+2. Compiles all pclsync C source files using the `cc` crate
+3. Links system libraries (fuse, openssl, zlib, udev, pthread, m). SQLite is **not** in this list — it is statically linked from the vendored amalgamation.
+4. Generates Rust bindings for C structs using `bindgen`
+5. Detects platform (Linux/macOS) for conditional compilation
+6. Emits `-Wl,--gc-sections` (Linux) / `-Wl,-dead_strip` (macOS) so the final binary drops unreferenced sections from both pclsync and SQLite
 
 Notes:
 - pclsync uses OpenSSL3.x for TLS
@@ -156,7 +163,8 @@ cd pkg/arch && makepkg -si
 ```
 
 All packages install the binary to `/usr/bin/pcloud` and include the `LICENSE` file.
-Runtime dependencies vary by format but cover: FUSE, SQLite, OpenSSL/TLS, zlib, and udev/systemd-libs.
+Runtime dependencies vary by format but cover: FUSE, OpenSSL/TLS, zlib, and udev/systemd-libs.
+SQLite is not a runtime dependency — it is statically linked from the vendored amalgamation.
 
 ## Testing Instructions
 

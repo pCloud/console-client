@@ -68,7 +68,7 @@ extended-description = """\
 pCloud console client for Linux. \
 Mounts your pCloud drive as a virtual FUSE filesystem, \
 supports encrypted (Crypto) folders, and runs as a daemon."""
-depends = "libfuse2, libsqlite3-0, libssl3, zlib1g, libudev1"
+depends = "libfuse2, libssl3, zlib1g, libudev1"
 assets = [
     ["target/release/pcloud-cli", "usr/bin/", "755"],
     ["LICENSE", "usr/share/doc/pcloud-cli/copyright", "644"],
@@ -82,7 +82,6 @@ assets = [
 
 [package.metadata.generate-rpm.requires]
 fuse-libs = "*"
-sqlite-libs = "*"
 openssl-libs = ">= 3.0"
 zlib = "*"
 systemd-libs = "*"
