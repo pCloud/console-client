@@ -41,6 +41,7 @@ sudo apt-get install \
   libsqlite3-dev \
   libssl-dev \
   zlib1g-dev \
+  libudev-dev \
   libclang-dev
 ```
 
@@ -72,7 +73,7 @@ sudo pacman -S \
 #### macOS
 
 ```bash
-brew install macfuse sqlite openssl llvm
+brew install macfuse sqlite openssl@3 llvm
 ```
 
 **Note**: macFUSE requires a system extension. After installation, you may need to:

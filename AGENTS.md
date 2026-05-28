@@ -146,8 +146,9 @@ The build script:
 6. Emits `-Wl,--gc-sections` (Linux) / `-Wl,-dead_strip` (macOS) so the final binary drops unreferenced sections from both pclsync and SQLite
 
 Notes:
-- pclsync uses OpenSSL3.x for TLS
-- Key dependencies are found via pkg-config when available
+- pclsync supports several SSL backends (OpenSSL 1.1.x, OpenSSL 3, wolfSSL, mbedTLS/PolarSSL 1.3.x, SecureTransport on macOS). We currently compile it with `P_SSL_OPENSSL3` on both Linux and macOS — change this in `build.rs::configure_linux` / `configure_macos` and update the system-library linking in `link_system_libraries` to switch.
+- Key dependencies are found via pkg-config when available, with hard-coded Homebrew fallbacks for macOS.
+- `build.rs` compiles the FUSE-enabled source set (Makefile `OBJ` + `OBJFS`). Optional pclsync features such as the document-editing subsystem (`pdocument_editing.c`) and the Linux overlay-icons client are not wired into the build.
 
 ### Packaging
 
@@ -529,6 +530,8 @@ mount | grep pcloud
 ## References
 
 - pclsync header: `pclsync/psynclib.h` (main API)
+- pclsync README: `pclsync/README.md` (build/SSL backend matrix, dependency discovery, test layout)
+- pclsync agent file: `pclsync/CLAUDE.md` (subsystem map, conventions, debug macros)
 - pclsync library (synclib): https://github.com/pCloud/pclsync
 - Original console-client: https://github.com/pcloudcom/console-client
 - Rust FFI book: https://doc.rust-lang.org/nomicon/ffi.html
