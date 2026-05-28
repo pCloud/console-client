@@ -10,12 +10,13 @@
 //! They do NOT test the actual pCloud sync functionality since that
 //! requires the pclsync library and network access.
 
+use assert_cmd::cargo_bin_cmd;
 use assert_cmd::Command;
 use predicates::prelude::*;
 
 /// Get a Command instance for the console-client binary.
 fn pcloud_cmd() -> Command {
-    assert_cmd::cargo_bin_cmd!("pcloud-cli")
+    cargo_bin_cmd!("pcloud-cli")
 }
 
 // ============================================================================
