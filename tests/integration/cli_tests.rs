@@ -327,3 +327,61 @@ fn test_mountpoint_with_spaces() {
     let mut cmd = pcloud_cmd();
     cmd.args(["-m", "/tmp/my pcloud folder"]).assert().failure(); // Will fail at runtime, but should parse
 }
+
+// ============================================================================
+// Backup Subcommand Tests
+// ============================================================================
+
+#[test]
+fn test_backup_help_lists_all_subcommands() {
+    let mut cmd = pcloud_cmd();
+    cmd.args(["backup", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("add"))
+        .stdout(predicate::str::contains("list"))
+        .stdout(predicate::str::contains("remove"))
+        .stdout(predicate::str::contains("stop-device"))
+        .stdout(predicate::str::contains("status"))
+        .stdout(predicate::str::contains("root-name"));
+}
+
+#[test]
+fn test_backup_add_help_documents_path_arg() {
+    let mut cmd = pcloud_cmd();
+    cmd.args(["backup", "add", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("PATH"));
+}
+
+#[test]
+fn test_backup_add_without_path_fails() {
+    let mut cmd = pcloud_cmd();
+    cmd.args(["backup", "add"]).assert().failure();
+}
+
+#[test]
+fn test_backup_add_with_no_daemon_and_no_creds_errors_with_hint() {
+    use tempfile::TempDir;
+
+    // Use a throwaway HOME and XDG dirs so we don't trip over any real saved
+    // credentials in the test runner's environment.
+    let home_dir = TempDir::new().expect("tempdir");
+    let mut cmd = pcloud_cmd();
+    cmd.env("HOME", home_dir.path())
+        .env("XDG_DATA_HOME", home_dir.path().join("xdg-data"))
+        .env("XDG_CONFIG_HOME", home_dir.path().join("xdg-config"))
+        .env("XDG_CACHE_HOME", home_dir.path().join("xdg-cache"))
+        .args(["backup", "add", "/tmp/some-path"])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn test_backup_subcommand_rejects_daemon_flag() {
+    let mut cmd = pcloud_cmd();
+    cmd.args(["backup", "add", "/tmp/foo", "-d"])
+        .assert()
+        .failure();
+}
