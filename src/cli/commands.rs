@@ -70,6 +70,27 @@ pub enum InteractiveCommand {
     /// Displays a list of available commands and their descriptions.
     Help,
 
+    /// Register a local folder as a pCloud backup destination.
+    BackupAdd(String),
+
+    /// List configured backups for the current device.
+    BackupList,
+
+    /// Remove a backup by sync id (does not delete files).
+    BackupRemove(u32),
+
+    /// Stop all backups on the current device.
+    BackupStopDevice,
+
+    /// Show backup status, optionally filtered by sync id.
+    BackupStatus(Option<u32>),
+
+    /// Print the backup root folder name for this device.
+    BackupRootName,
+
+    /// Print help for the `backup` subcommand group.
+    BackupHelp,
+
     /// Unknown or unrecognized command.
     ///
     /// Contains the original input that could not be parsed.
@@ -105,7 +126,23 @@ impl InteractiveCommand {
     /// );
     /// ```
     pub fn parse(input: &str) -> Self {
-        match input.trim().to_lowercase().as_str() {
+        let trimmed = input.trim();
+        let lower = trimmed.to_lowercase();
+
+        // Bare `backup` -> backup-group help; `backup <verb> [args]` parses
+        // into one of the BackupXxx variants. We do the split BEFORE the flat
+        // single-word match below so multi-word backup forms aren't shunted
+        // into Unknown.
+        if lower == "backup" {
+            return Self::BackupHelp;
+        }
+        if let Some(rest) = lower.strip_prefix("backup ") {
+            // Preserve original-case args by re-slicing `trimmed`.
+            let original_rest = trimmed[("backup".len())..].trim_start();
+            return parse_backup_verb(original_rest, rest.trim());
+        }
+
+        match lower.as_str() {
             "startcrypto" | "start" | "crypto" => Self::StartCrypto,
             "stopcrypto" | "stop" => Self::StopCrypto,
             "finalize" | "fin" | "finish" => Self::Finalize,
@@ -143,6 +180,13 @@ impl InteractiveCommand {
             Self::Logout => "Log out and clear saved credentials",
             Self::Unlink => "Unlink account and clear all local data",
             Self::Help => "Show available commands",
+            Self::BackupAdd(_) => "Register a local folder as a pCloud backup",
+            Self::BackupList => "List backups configured for this device",
+            Self::BackupRemove(_) => "Remove a backup by sync id",
+            Self::BackupStopDevice => "Stop all backups on this device",
+            Self::BackupStatus(_) => "Show backup status",
+            Self::BackupRootName => "Print the backup root folder name",
+            Self::BackupHelp => "Show backup subcommand help",
             Self::Unknown(_) => "Unknown command",
         }
     }
@@ -162,6 +206,20 @@ impl InteractiveCommand {
         println!("  logout, lo          - Log out and clear saved credentials");
         println!("  unlink, ul          - Unlink account and clear all local data");
         println!("  help, h, ?          - Show this help");
+        println!();
+        Self::print_backup_help();
+    }
+
+    /// Print help for the `backup` subcommand group.
+    pub fn print_backup_help() {
+        println!("Backup commands:");
+        println!();
+        println!("  backup add <path>     - Register a local folder as a backup");
+        println!("  backup list           - List backups for this device");
+        println!("  backup remove <id>    - Remove a backup by sync id");
+        println!("  backup stop-device    - Stop all backups on this device");
+        println!("  backup status [id]    - Show backup status (optional sync id)");
+        println!("  backup root-name      - Print the backup root folder name");
         println!();
     }
 
@@ -189,7 +247,62 @@ impl InteractiveCommand {
         )?;
         writeln!(writer, "  help, h, ?          - Show this help")?;
         writeln!(writer)?;
+        writeln!(writer, "Backup commands:")?;
+        writeln!(writer)?;
+        writeln!(writer, "  backup add <path>     - Register a local folder as a backup")?;
+        writeln!(writer, "  backup list           - List backups for this device")?;
+        writeln!(writer, "  backup remove <id>    - Remove a backup by sync id")?;
+        writeln!(writer, "  backup stop-device    - Stop all backups on this device")?;
+        writeln!(writer, "  backup status [id]    - Show backup status (optional sync id)")?;
+        writeln!(writer, "  backup root-name      - Print the backup root folder name")?;
+        writeln!(writer)?;
         Ok(())
+    }
+}
+
+/// Parse a backup sub-verb plus optional arguments.
+///
+/// `original_rest` preserves case for path arguments; `lower_rest` is the
+/// already-lowercased form used to dispatch on the verb name.
+fn parse_backup_verb(original_rest: &str, lower_rest: &str) -> InteractiveCommand {
+    let (verb_lower, args_lower) = match lower_rest.split_once(' ') {
+        Some((v, rest)) => (v, rest.trim()),
+        None => (lower_rest, ""),
+    };
+    let (_, args_original) = match original_rest.split_once(' ') {
+        Some((_, rest)) => ("", rest.trim()),
+        None => ("", ""),
+    };
+
+    match verb_lower {
+        "add" => {
+            if args_original.is_empty() {
+                InteractiveCommand::Unknown("backup add (missing path)".to_string())
+            } else {
+                InteractiveCommand::BackupAdd(args_original.to_string())
+            }
+        }
+        "list" | "ls" => InteractiveCommand::BackupList,
+        "remove" | "rm" | "delete" | "del" => {
+            match args_lower.parse::<u32>() {
+                Ok(id) => InteractiveCommand::BackupRemove(id),
+                Err(_) => InteractiveCommand::Unknown(format!("backup remove {}", args_lower)),
+            }
+        }
+        "stop-device" | "stopdevice" => InteractiveCommand::BackupStopDevice,
+        "status" | "stat" => {
+            if args_lower.is_empty() {
+                InteractiveCommand::BackupStatus(None)
+            } else {
+                match args_lower.parse::<u32>() {
+                    Ok(id) => InteractiveCommand::BackupStatus(Some(id)),
+                    Err(_) => InteractiveCommand::Unknown(format!("backup status {}", args_lower)),
+                }
+            }
+        }
+        "root-name" | "rootname" | "root" => InteractiveCommand::BackupRootName,
+        "help" | "h" | "?" => InteractiveCommand::BackupHelp,
+        other => InteractiveCommand::Unknown(format!("backup {}", other)),
     }
 }
 
@@ -204,6 +317,14 @@ impl fmt::Display for InteractiveCommand {
             Self::Logout => write!(f, "logout"),
             Self::Unlink => write!(f, "unlink"),
             Self::Help => write!(f, "help"),
+            Self::BackupAdd(p) => write!(f, "backup add {}", p),
+            Self::BackupList => write!(f, "backup list"),
+            Self::BackupRemove(id) => write!(f, "backup remove {}", id),
+            Self::BackupStopDevice => write!(f, "backup stop-device"),
+            Self::BackupStatus(None) => write!(f, "backup status"),
+            Self::BackupStatus(Some(id)) => write!(f, "backup status {}", id),
+            Self::BackupRootName => write!(f, "backup root-name"),
+            Self::BackupHelp => write!(f, "backup help"),
             Self::Unknown(s) => write!(f, "unknown({})", s),
         }
     }
@@ -477,5 +598,120 @@ mod tests {
         let cmd = InteractiveCommand::StartCrypto;
         let cloned = cmd.clone();
         assert_eq!(cmd, cloned);
+    }
+
+    // ========================================================================
+    // Backup parse tests
+    // ========================================================================
+
+    #[test]
+    fn test_parse_backup_bare_word_is_help() {
+        assert_eq!(InteractiveCommand::parse("backup"), InteractiveCommand::BackupHelp);
+        assert_eq!(InteractiveCommand::parse("BACKUP"), InteractiveCommand::BackupHelp);
+    }
+
+    #[test]
+    fn test_parse_backup_add_with_path() {
+        // Path case is preserved.
+        assert_eq!(
+            InteractiveCommand::parse("backup add /tmp/Foo"),
+            InteractiveCommand::BackupAdd("/tmp/Foo".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_backup_add_without_path_is_unknown() {
+        match InteractiveCommand::parse("backup add") {
+            InteractiveCommand::Unknown(s) => assert!(s.contains("missing path")),
+            other => panic!("expected Unknown, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_backup_list_and_alias() {
+        assert_eq!(
+            InteractiveCommand::parse("backup list"),
+            InteractiveCommand::BackupList
+        );
+        assert_eq!(
+            InteractiveCommand::parse("backup ls"),
+            InteractiveCommand::BackupList
+        );
+    }
+
+    #[test]
+    fn test_parse_backup_remove() {
+        assert_eq!(
+            InteractiveCommand::parse("backup remove 5"),
+            InteractiveCommand::BackupRemove(5)
+        );
+        assert_eq!(
+            InteractiveCommand::parse("backup rm 42"),
+            InteractiveCommand::BackupRemove(42)
+        );
+    }
+
+    #[test]
+    fn test_parse_backup_remove_bad_id_is_unknown() {
+        match InteractiveCommand::parse("backup remove abc") {
+            InteractiveCommand::Unknown(s) => assert!(s.contains("backup remove")),
+            other => panic!("expected Unknown, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_backup_stop_device() {
+        assert_eq!(
+            InteractiveCommand::parse("backup stop-device"),
+            InteractiveCommand::BackupStopDevice
+        );
+        assert_eq!(
+            InteractiveCommand::parse("backup stopdevice"),
+            InteractiveCommand::BackupStopDevice
+        );
+    }
+
+    #[test]
+    fn test_parse_backup_status() {
+        assert_eq!(
+            InteractiveCommand::parse("backup status"),
+            InteractiveCommand::BackupStatus(None)
+        );
+        assert_eq!(
+            InteractiveCommand::parse("backup status 7"),
+            InteractiveCommand::BackupStatus(Some(7))
+        );
+    }
+
+    #[test]
+    fn test_parse_backup_root_name() {
+        assert_eq!(
+            InteractiveCommand::parse("backup root-name"),
+            InteractiveCommand::BackupRootName
+        );
+        assert_eq!(
+            InteractiveCommand::parse("backup rootname"),
+            InteractiveCommand::BackupRootName
+        );
+    }
+
+    #[test]
+    fn test_parse_backup_unknown_verb() {
+        match InteractiveCommand::parse("backup foobar") {
+            InteractiveCommand::Unknown(s) => assert!(s.contains("backup foobar")),
+            other => panic!("expected Unknown, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_backup_help_in_write_help() {
+        let mut buf = Vec::new();
+        InteractiveCommand::write_help(&mut buf).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert!(out.contains("backup add"));
+        assert!(out.contains("backup list"));
+        assert!(out.contains("backup remove"));
+        assert!(out.contains("backup status"));
+        assert!(out.contains("backup root-name"));
     }
 }
