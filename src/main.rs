@@ -664,6 +664,27 @@ fn run_command_loop(client: Arc<Mutex<PCloudClient>>) -> Result<()> {
             InteractiveCommand::Help => {
                 InteractiveCommand::print_help();
             }
+            InteractiveCommand::BackupHelp => {
+                InteractiveCommand::print_backup_help();
+            }
+            InteractiveCommand::BackupAdd(path) => {
+                handle_backup_add_foreground(&client, &path);
+            }
+            InteractiveCommand::BackupList => {
+                handle_backup_list_foreground(&client);
+            }
+            InteractiveCommand::BackupRemove(id) => {
+                handle_backup_remove_foreground(&client, id);
+            }
+            InteractiveCommand::BackupStopDevice => {
+                handle_backup_stop_device_foreground(&client);
+            }
+            InteractiveCommand::BackupStatus(id) => {
+                handle_backup_status_foreground(&client, id);
+            }
+            InteractiveCommand::BackupRootName => {
+                handle_backup_root_name_foreground(&client);
+            }
             InteractiveCommand::Unknown(s) => {
                 if !s.is_empty() {
                     println!(
@@ -679,7 +700,124 @@ fn run_command_loop(client: Arc<Mutex<PCloudClient>>) -> Result<()> {
     Ok(())
 }
 
-/// Handle the 'startcrypto' command.
+// ============================================================================
+// Foreground REPL backup handlers
+// ============================================================================
+
+fn handle_backup_add_foreground(client: &Arc<Mutex<PCloudClient>>, path: &str) {
+    let guard = match client.lock() {
+        Ok(g) => g,
+        Err(e) => {
+            eprintln!("Failed to acquire client lock: {}", e);
+            return;
+        }
+    };
+    match guard.create_backup(std::path::Path::new(path)) {
+        Ok(id) => println!("Backup created (sync id: {})", id),
+        Err(e) => eprintln!("Error: {}", e),
+    }
+}
+
+fn handle_backup_list_foreground(client: &Arc<Mutex<PCloudClient>>) {
+    let guard = match client.lock() {
+        Ok(g) => g,
+        Err(e) => {
+            eprintln!("Failed to acquire client lock: {}", e);
+            return;
+        }
+    };
+    match guard.list_backups() {
+        Ok(list) if list.is_empty() => println!("No backups configured."),
+        Ok(list) => {
+            for b in list {
+                println!(
+                    "[{}] {} -> {}",
+                    b.sync_id,
+                    b.local_path.display(),
+                    b.remote_path
+                );
+            }
+        }
+        Err(e) => eprintln!("Error: {}", e),
+    }
+}
+
+fn handle_backup_remove_foreground(client: &Arc<Mutex<PCloudClient>>, sync_id: u32) {
+    let guard = match client.lock() {
+        Ok(g) => g,
+        Err(e) => {
+            eprintln!("Failed to acquire client lock: {}", e);
+            return;
+        }
+    };
+    use console_client::wrapper::BackupId;
+    match guard.delete_backup(BackupId(sync_id)) {
+        Ok(()) => println!("Backup {} removed", sync_id),
+        Err(e) => eprintln!("Error: {}", e),
+    }
+}
+
+fn handle_backup_stop_device_foreground(client: &Arc<Mutex<PCloudClient>>) {
+    let guard = match client.lock() {
+        Ok(g) => g,
+        Err(e) => {
+            eprintln!("Failed to acquire client lock: {}", e);
+            return;
+        }
+    };
+    match guard.stop_device(None) {
+        Ok(()) => println!("Device backups stopped"),
+        Err(e) => eprintln!("Error: {}", e),
+    }
+}
+
+fn handle_backup_status_foreground(client: &Arc<Mutex<PCloudClient>>, id: Option<u32>) {
+    let guard = match client.lock() {
+        Ok(g) => g,
+        Err(e) => {
+            eprintln!("Failed to acquire client lock: {}", e);
+            return;
+        }
+    };
+    use console_client::wrapper::BackupId;
+    match guard.backup_status(id.map(BackupId)) {
+        Ok(s) => {
+            println!("Device: {}", s.device_name);
+            println!("Backups ({}):", s.backups.len());
+            for b in &s.backups {
+                println!(
+                    "  [{}] {} -> {}",
+                    b.sync_id,
+                    b.local_path.display(),
+                    b.remote_path
+                );
+            }
+            if !s.recent_events.is_empty() {
+                println!("Recent events:");
+                for ev in &s.recent_events {
+                    println!("  {} (kind={})", ev.kind_str, ev.kind);
+                }
+            }
+        }
+        Err(e) => eprintln!("Error: {}", e),
+    }
+}
+
+fn handle_backup_root_name_foreground(client: &Arc<Mutex<PCloudClient>>) {
+    let guard = match client.lock() {
+        Ok(g) => g,
+        Err(e) => {
+            eprintln!("Failed to acquire client lock: {}", e);
+            return;
+        }
+    };
+    match guard.backup_root_name() {
+        Ok(name) => println!("{}", name),
+        Err(e) => eprintln!("Error: {}", e),
+    }
+}
+
+/// Handle the `startcrypto` interactive command.
 fn handle_start_crypto(client: &Arc<Mutex<PCloudClient>>) -> Result<()> {
     let pwd = prompt_for_password("Crypto password: ").map_err(PCloudError::Io)?;
 
@@ -1102,6 +1240,16 @@ fn run_client_command_loop(client: &console_client::daemon::DaemonClient) -> Res
                 print_client_help();
                 continue;
             }
+            InteractiveCommand::BackupHelp => {
+                InteractiveCommand::print_backup_help();
+                continue;
+            }
+            InteractiveCommand::BackupAdd(path) => DaemonCommand::BackupCreate { path },
+            InteractiveCommand::BackupList => DaemonCommand::BackupList,
+            InteractiveCommand::BackupRemove(id) => DaemonCommand::BackupRemove { sync_id: id },
+            InteractiveCommand::BackupStopDevice => DaemonCommand::BackupStopDevice,
+            InteractiveCommand::BackupStatus(id) => DaemonCommand::BackupStatus { sync_id: id },
+            InteractiveCommand::BackupRootName => DaemonCommand::BackupRootName,
             InteractiveCommand::Unknown(s) => {
                 if !s.is_empty() {
                     println!(
@@ -1164,6 +1312,47 @@ fn print_daemon_response(response: &console_client::daemon::DaemonResponse) {
             println!("---------------------\n");
         }
         DaemonResponse::Pong => println!("Pong"),
+        DaemonResponse::BackupCreated { sync_id } => {
+            println!("Backup created (sync id: {})", sync_id);
+        }
+        DaemonResponse::BackupList(list) => {
+            if list.is_empty() {
+                println!("No backups configured.");
+            } else {
+                println!(
+                    "{:<6}  {:<40}  {:<32}  {:>12}",
+                    "ID", "Local Path", "Remote Path", "Folder ID"
+                );
+                for b in list {
+                    println!(
+                        "{:<6}  {:<40}  {:<32}  {:>12}",
+                        b.sync_id,
+                        b.local_path.display(),
+                        b.remote_path,
+                        b.folder_id
+                    );
+                }
+            }
+        }
+        DaemonResponse::BackupStatus(s) => {
+            println!("Device: {}", s.device_name);
+            println!("Backups ({}):", s.backups.len());
+            for b in &s.backups {
+                println!(
+                    "  [{}] {} -> {}",
+                    b.sync_id,
+                    b.local_path.display(),
+                    b.remote_path
+                );
+            }
+            if !s.recent_events.is_empty() {
+                println!("Recent events:");
+                for ev in &s.recent_events {
+                    println!("  {} (kind={})", ev.kind_str, ev.kind);
+                }
+            }
+        }
+        DaemonResponse::BackupRootName(name) => println!("{}", name),
     }
 }
 

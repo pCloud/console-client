@@ -51,7 +51,7 @@ use zeroize::Zeroize;
 
 use crate::error::{DaemonError, PCloudError, Result};
 use crate::security::SecurePassword;
-use crate::wrapper::PCloudClient;
+use crate::wrapper::{BackupId, BackupInfo, BackupStatusInfo, PCloudClient};
 
 /// Commands that can be sent to the daemon.
 ///
@@ -121,6 +121,33 @@ pub enum DaemonCommand {
     /// After unlinking, the daemon shuts down since the account
     /// is fully disconnected and all local data has been removed.
     Unlink,
+
+    /// Create a backup for the given local path.
+    BackupCreate {
+        /// Local folder path to back up.
+        path: String,
+    },
+
+    /// Remove a backup by sync id.
+    BackupRemove {
+        /// Sync id of the backup to remove.
+        sync_id: u32,
+    },
+
+    /// Stop all backups on the current device (folder_id = 0).
+    BackupStopDevice,
+
+    /// List backups configured for the current device.
+    BackupList,
+
+    /// Get backup status, optionally filtered to a single backup by id.
+    BackupStatus {
+        /// Optional sync id to filter on.
+        sync_id: Option<u32>,
+    },
+
+    /// Print the backup root folder name for this device.
+    BackupRootName,
 }
 
 /// Custom Debug implementation that redacts password values.
@@ -145,6 +172,21 @@ impl std::fmt::Debug for DaemonCommand {
             DaemonCommand::Ping => write!(f, "Ping"),
             DaemonCommand::Logout => write!(f, "Logout"),
             DaemonCommand::Unlink => write!(f, "Unlink"),
+            DaemonCommand::BackupCreate { path } => f
+                .debug_struct("BackupCreate")
+                .field("path", path)
+                .finish(),
+            DaemonCommand::BackupRemove { sync_id } => f
+                .debug_struct("BackupRemove")
+                .field("sync_id", sync_id)
+                .finish(),
+            DaemonCommand::BackupStopDevice => write!(f, "BackupStopDevice"),
+            DaemonCommand::BackupList => write!(f, "BackupList"),
+            DaemonCommand::BackupStatus { sync_id } => f
+                .debug_struct("BackupStatus")
+                .field("sync_id", sync_id)
+                .finish(),
+            DaemonCommand::BackupRootName => write!(f, "BackupRootName"),
         }
     }
 }
@@ -160,6 +202,12 @@ impl std::fmt::Display for DaemonCommand {
             DaemonCommand::Ping => write!(f, "Ping"),
             DaemonCommand::Logout => write!(f, "Logout"),
             DaemonCommand::Unlink => write!(f, "Unlink"),
+            DaemonCommand::BackupCreate { .. } => write!(f, "BackupCreate"),
+            DaemonCommand::BackupRemove { .. } => write!(f, "BackupRemove"),
+            DaemonCommand::BackupStopDevice => write!(f, "BackupStopDevice"),
+            DaemonCommand::BackupList => write!(f, "BackupList"),
+            DaemonCommand::BackupStatus { .. } => write!(f, "BackupStatus"),
+            DaemonCommand::BackupRootName => write!(f, "BackupRootName"),
         }
     }
 }
@@ -193,6 +241,21 @@ pub enum DaemonResponse {
 
     /// Pong response to Ping command.
     Pong,
+
+    /// Response to `BackupCreate` - the new backup's sync id.
+    BackupCreated {
+        /// Sync id of the newly created backup.
+        sync_id: u32,
+    },
+
+    /// Response to `BackupList` - the configured backups.
+    BackupList(Vec<BackupInfo>),
+
+    /// Response to `BackupStatus` - the status summary.
+    BackupStatus(BackupStatusInfo),
+
+    /// Response to `BackupRootName` - the device backup root folder name.
+    BackupRootName(String),
 }
 
 impl std::fmt::Display for DaemonResponse {
@@ -218,6 +281,26 @@ impl std::fmt::Display for DaemonResponse {
                 Ok(())
             }
             DaemonResponse::Pong => write!(f, "Pong"),
+            DaemonResponse::BackupCreated { sync_id } => {
+                write!(f, "Backup created (sync id: {})", sync_id)
+            }
+            DaemonResponse::BackupList(list) => {
+                if list.is_empty() {
+                    write!(f, "No backups configured")
+                } else {
+                    write!(f, "{} backup(s) configured", list.len())
+                }
+            }
+            DaemonResponse::BackupStatus(s) => {
+                write!(
+                    f,
+                    "device={}, backups={}, recent_events={}",
+                    s.device_name,
+                    s.backups.len(),
+                    s.recent_events.len()
+                )
+            }
+            DaemonResponse::BackupRootName(name) => write!(f, "{}", name),
         }
     }
 }
@@ -556,6 +639,54 @@ fn process_command(
                         .to_string(),
                 )
             }
+            Err(e) => DaemonResponse::Error(format!("Failed to acquire client lock: {}", e)),
+        },
+
+        DaemonCommand::BackupCreate { ref path } => match client.lock() {
+            Ok(c) => match c.create_backup(std::path::Path::new(path)) {
+                Ok(BackupId(id)) => DaemonResponse::BackupCreated { sync_id: id },
+                Err(e) => DaemonResponse::Error(e.to_string()),
+            },
+            Err(e) => DaemonResponse::Error(format!("Failed to acquire client lock: {}", e)),
+        },
+
+        DaemonCommand::BackupRemove { sync_id } => match client.lock() {
+            Ok(c) => match c.delete_backup(BackupId(sync_id)) {
+                Ok(()) => DaemonResponse::OkWithMessage(format!("Backup {} removed", sync_id)),
+                Err(e) => DaemonResponse::Error(e.to_string()),
+            },
+            Err(e) => DaemonResponse::Error(format!("Failed to acquire client lock: {}", e)),
+        },
+
+        DaemonCommand::BackupStopDevice => match client.lock() {
+            Ok(c) => match c.stop_device(None) {
+                Ok(()) => DaemonResponse::OkWithMessage("Device backups stopped".to_string()),
+                Err(e) => DaemonResponse::Error(e.to_string()),
+            },
+            Err(e) => DaemonResponse::Error(format!("Failed to acquire client lock: {}", e)),
+        },
+
+        DaemonCommand::BackupList => match client.lock() {
+            Ok(c) => match c.list_backups() {
+                Ok(list) => DaemonResponse::BackupList(list),
+                Err(e) => DaemonResponse::Error(e.to_string()),
+            },
+            Err(e) => DaemonResponse::Error(format!("Failed to acquire client lock: {}", e)),
+        },
+
+        DaemonCommand::BackupStatus { sync_id } => match client.lock() {
+            Ok(c) => match c.backup_status(sync_id.map(BackupId)) {
+                Ok(s) => DaemonResponse::BackupStatus(s),
+                Err(e) => DaemonResponse::Error(e.to_string()),
+            },
+            Err(e) => DaemonResponse::Error(format!("Failed to acquire client lock: {}", e)),
+        },
+
+        DaemonCommand::BackupRootName => match client.lock() {
+            Ok(c) => match c.backup_root_name() {
+                Ok(name) => DaemonResponse::BackupRootName(name),
+                Err(e) => DaemonResponse::Error(e.to_string()),
+            },
             Err(e) => DaemonResponse::Error(format!("Failed to acquire client lock: {}", e)),
         },
     }
@@ -912,5 +1043,96 @@ mod tests {
         let bytes = len.to_le_bytes();
         assert_eq!(bytes.len(), 4);
         assert_eq!(u32::from_le_bytes(bytes), 256);
+    }
+
+    // ========================================================================
+    // Backup IPC tests
+    // ========================================================================
+
+    #[test]
+    fn test_backup_command_roundtrip() {
+        let commands = vec![
+            DaemonCommand::BackupCreate {
+                path: "/tmp/foo".to_string(),
+            },
+            DaemonCommand::BackupRemove { sync_id: 42 },
+            DaemonCommand::BackupStopDevice,
+            DaemonCommand::BackupList,
+            DaemonCommand::BackupStatus { sync_id: None },
+            DaemonCommand::BackupStatus { sync_id: Some(7) },
+            DaemonCommand::BackupRootName,
+        ];
+        for cmd in commands {
+            let bytes = bincode::serialize(&cmd).expect("serialize");
+            let back: DaemonCommand = bincode::deserialize(&bytes).expect("deserialize");
+            assert_eq!(format!("{:?}", cmd), format!("{:?}", back));
+        }
+    }
+
+    #[test]
+    fn test_backup_response_roundtrip() {
+        use crate::wrapper::{BackupEvent, BackupInfo, BackupStatusInfo};
+        use std::path::PathBuf;
+
+        let info = BackupInfo {
+            sync_id: 1,
+            local_path: PathBuf::from("/tmp/x"),
+            remote_path: "/Backups/host/x".to_string(),
+            folder_id: 11,
+        };
+
+        let status = BackupStatusInfo {
+            device_name: "host".to_string(),
+            backups: vec![info.clone()],
+            recent_events: vec![BackupEvent {
+                kind: 401,
+                kind_str: "backup-stopped".to_string(),
+                path: None,
+                sync_id: None,
+                timestamp: 0,
+            }],
+        };
+
+        let responses = vec![
+            DaemonResponse::BackupCreated { sync_id: 5 },
+            DaemonResponse::BackupList(vec![info]),
+            DaemonResponse::BackupStatus(status),
+            DaemonResponse::BackupRootName("host-mac".to_string()),
+        ];
+        for resp in responses {
+            let bytes = bincode::serialize(&resp).expect("serialize");
+            let back: DaemonResponse = bincode::deserialize(&bytes).expect("deserialize");
+            assert_eq!(format!("{:?}", resp), format!("{:?}", back));
+        }
+    }
+
+    #[test]
+    fn test_backup_command_display() {
+        assert_eq!(
+            format!(
+                "{}",
+                DaemonCommand::BackupCreate {
+                    path: "/tmp/foo".to_string()
+                }
+            ),
+            "BackupCreate"
+        );
+        assert_eq!(
+            format!("{}", DaemonCommand::BackupRemove { sync_id: 1 }),
+            "BackupRemove"
+        );
+        assert_eq!(
+            format!("{}", DaemonCommand::BackupStopDevice),
+            "BackupStopDevice"
+        );
+        assert_eq!(format!("{}", DaemonCommand::BackupList), "BackupList");
+        assert_eq!(
+            format!("{}", DaemonCommand::BackupStatus { sync_id: None }),
+            "BackupStatus"
+        );
+        assert_eq!(
+            format!("{}", DaemonCommand::BackupRootName),
+            "BackupRootName"
+        );
     }
 }
