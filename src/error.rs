@@ -39,6 +39,10 @@ pub enum PCloudError {
     #[error("Daemon error: {0}")]
     Daemon(#[from] DaemonError),
 
+    /// Backup operation error
+    #[error("Backup error: {0}")]
+    Backup(#[from] BackupError),
+
     /// Configuration error
     #[error("Configuration error: {0}")]
     Config(String),
@@ -348,6 +352,79 @@ pub enum FilesystemError {
     Unknown(i32),
 }
 
+/// Errors specific to backup operations.
+///
+/// These map to the `psync_create_backup`/`psync_delete_backup` failure
+/// modes plus a couple of Rust-side cases.
+#[derive(Error, Debug)]
+pub enum BackupError {
+    /// `psync_create_backup` rejected the path as empty.
+    #[error("Backup path is empty")]
+    PathEmpty,
+
+    /// One of the `BEAPI_ERR_*_IN_BUP` family (operation not allowed inside
+    /// a backup folder).
+    #[error("Operation not allowed inside a backup folder")]
+    NotAllowedInBackup,
+
+    /// Generic failure with the C library's error message.
+    #[error("Backup operation failed: {0}")]
+    Failed(String),
+
+    /// Sync id has no matching backup row.
+    #[error("Backup with sync id {0} not found")]
+    NotFound(u32),
+
+    /// Backup operation succeeded but the new sync id could not be
+    /// resolved from the listing (defensive — see
+    /// `BackupError::from_create_code` callers).
+    #[error("Backup created but its sync id could not be resolved")]
+    IdResolutionFailed,
+
+    /// Unknown numeric error code from pclsync.
+    #[error("Backup error (code: {0})")]
+    Unknown(i32),
+}
+
+impl BackupError {
+    /// Convert a `psync_create_backup` result to a `BackupError`.
+    ///
+    /// `err_message` is the optional string copied from the C `**err`
+    /// out-parameter (already freed by the caller).
+    pub fn from_create_code(code: i32, err_message: Option<String>) -> Self {
+        use crate::ffi::types::{
+            BEAPI_ERR_NOT_ALLOWED_IN_BUP, BEAPI_ERR_NO_DL_LINK_IN_BUP, BEAPI_ERR_NO_PUB_F_IN_BUP,
+            BEAPI_ERR_NO_UPLINK_IN_BUP, PSYNC_BACKUP_PATH_EMPTY_ERR,
+        };
+
+        if code == PSYNC_BACKUP_PATH_EMPTY_ERR {
+            return BackupError::PathEmpty;
+        }
+        if code == BEAPI_ERR_NO_PUB_F_IN_BUP
+            || code == BEAPI_ERR_NO_UPLINK_IN_BUP
+            || code == BEAPI_ERR_NO_DL_LINK_IN_BUP
+            || code == BEAPI_ERR_NOT_ALLOWED_IN_BUP
+        {
+            return BackupError::NotAllowedInBackup;
+        }
+        match err_message {
+            Some(msg) if !msg.is_empty() => BackupError::Failed(msg),
+            _ => BackupError::Unknown(code),
+        }
+    }
+
+    /// Convert a `psync_delete_backup` result to a `BackupError`.
+    pub fn from_delete_code(code: i32, err_message: Option<String>, sync_id: u32) -> Self {
+        if code == -1 {
+            return BackupError::NotFound(sync_id);
+        }
+        match err_message {
+            Some(msg) if !msg.is_empty() => BackupError::Failed(msg),
+            _ => BackupError::Unknown(code),
+        }
+    }
+}
+
 /// Daemon and IPC operation errors.
 #[derive(Error, Debug)]
 pub enum DaemonError {
@@ -556,6 +633,76 @@ mod tests {
         let daemon_err = DaemonError::NotRunning;
         let pcloud_err: PCloudError = daemon_err.into();
         assert!(matches!(pcloud_err, PCloudError::Daemon(_)));
+    }
+
+    #[test]
+    fn test_pcloud_error_from_backup() {
+        let backup_err = BackupError::PathEmpty;
+        let pcloud_err: PCloudError = backup_err.into();
+        assert!(matches!(pcloud_err, PCloudError::Backup(_)));
+    }
+
+    #[test]
+    fn test_backup_error_from_create_code() {
+        // Path empty maps to PathEmpty
+        let err = BackupError::from_create_code(11001, None);
+        assert!(matches!(err, BackupError::PathEmpty));
+
+        // BEAPI codes map to NotAllowedInBackup
+        for &code in &[2340, 2342, 2343, 2346] {
+            let err = BackupError::from_create_code(code, None);
+            assert!(matches!(err, BackupError::NotAllowedInBackup));
+        }
+
+        // Unknown code with an error message maps to Failed
+        let err = BackupError::from_create_code(9999, Some("boom".to_string()));
+        match err {
+            BackupError::Failed(msg) => assert_eq!(msg, "boom"),
+            other => panic!("unexpected: {:?}", other),
+        }
+
+        // Unknown code with no message maps to Unknown
+        let err = BackupError::from_create_code(9999, None);
+        assert!(matches!(err, BackupError::Unknown(9999)));
+
+        // Empty message also falls through to Unknown
+        let err = BackupError::from_create_code(9999, Some(String::new()));
+        assert!(matches!(err, BackupError::Unknown(9999)));
+    }
+
+    #[test]
+    fn test_backup_error_from_delete_code() {
+        // -1 maps to NotFound with the sync id
+        let err = BackupError::from_delete_code(-1, None, 42);
+        assert!(matches!(err, BackupError::NotFound(42)));
+
+        // Other codes with messages -> Failed
+        let err = BackupError::from_delete_code(7, Some("nope".to_string()), 1);
+        match err {
+            BackupError::Failed(msg) => assert_eq!(msg, "nope"),
+            other => panic!("unexpected: {:?}", other),
+        }
+
+        // Other codes without messages -> Unknown
+        let err = BackupError::from_delete_code(7, None, 1);
+        assert!(matches!(err, BackupError::Unknown(7)));
+    }
+
+    #[test]
+    fn test_backup_error_display() {
+        assert!(BackupError::PathEmpty.to_string().contains("empty"));
+        assert!(BackupError::NotAllowedInBackup
+            .to_string()
+            .contains("not allowed"));
+        let failed = BackupError::Failed("nope".to_string());
+        assert!(failed.to_string().contains("nope"));
+        let not_found = BackupError::NotFound(99);
+        assert!(not_found.to_string().contains("99"));
+        assert!(BackupError::IdResolutionFailed
+            .to_string()
+            .contains("sync id"));
+        let unknown = BackupError::Unknown(123);
+        assert!(unknown.to_string().contains("123"));
     }
 
     #[test]
@@ -956,6 +1103,7 @@ mod tests {
         assert_send_sync::<FilesystemError>();
         assert_send_sync::<DaemonError>();
         assert_send_sync::<WebLoginError>();
+        assert_send_sync::<BackupError>();
     }
 
     #[test]
