@@ -807,9 +807,7 @@ mod tests {
         let cli = Cli::parse_from_args(["pcloud", "backup", "list"]);
         assert!(matches!(
             cli.command,
-            Some(Command::Backup(BackupArgs {
-                op: BackupOp::List
-            }))
+            Some(Command::Backup(BackupArgs { op: BackupOp::List }))
         ));
     }
 
@@ -873,17 +871,11 @@ mod tests {
         let parsed = Cli::try_parse_from_args(["pcloud", "backup", "add", "/tmp/foo", "-d"]);
         // clap should accept the args (subcommand + global flag); validate()
         // rejects the combination.
-        match parsed {
-            Ok(cli) => {
-                let result = cli.validate();
-                assert!(result.is_err(), "expected validate() error");
-                assert!(result
-                    .unwrap_err()
-                    .to_lowercase()
-                    .contains("subcommand"));
-            }
-            // If clap itself rejected the combination, that's also acceptable.
-            Err(_) => {}
+        // If clap itself rejects the combination, that's also acceptable.
+        if let Ok(cli) = parsed {
+            let result = cli.validate();
+            assert!(result.is_err(), "expected validate() error");
+            assert!(result.unwrap_err().to_lowercase().contains("subcommand"));
         }
     }
 

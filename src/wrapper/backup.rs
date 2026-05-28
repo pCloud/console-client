@@ -279,7 +279,9 @@ impl PCloudClient {
 
         if code != 0 {
             return Err(PCloudError::Backup(BackupError::from_delete_code(
-                code, err_message, id.0,
+                code,
+                err_message,
+                id.0,
             )));
         }
         Ok(())
@@ -297,9 +299,7 @@ impl PCloudClient {
         let err_message = unsafe { take_err(err_ptr) };
 
         match err_message {
-            Some(msg) if !msg.is_empty() => {
-                Err(PCloudError::Backup(BackupError::Failed(msg)))
-            }
+            Some(msg) if !msg.is_empty() => Err(PCloudError::Backup(BackupError::Failed(msg))),
             _ => Ok(()),
         }
     }
@@ -325,7 +325,7 @@ impl PCloudClient {
 
         for i in 0..list.foldercnt {
             // Safety: folders has foldercnt entries (flexible-array member).
-            let folder = unsafe { &*list.folders.as_ptr().add(i as usize) };
+            let folder = unsafe { &*list.folders.as_ptr().add(i) };
             if folder.synctype != PSYNC_BACKUPS {
                 continue;
             }
@@ -333,8 +333,7 @@ impl PCloudClient {
                 Some(p) => p,
                 None => continue,
             };
-            let remote_path =
-                unsafe { cstr_to_string(folder.remotepath) }.unwrap_or_default();
+            let remote_path = unsafe { cstr_to_string(folder.remotepath) }.unwrap_or_default();
             out.push(BackupInfo {
                 sync_id: folder.syncid,
                 local_path,
