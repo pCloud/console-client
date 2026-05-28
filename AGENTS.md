@@ -509,7 +509,11 @@ pcloud backup root-name       # print the backup root folder name
 When `pcloud backup ...` runs and no daemon is alive on the per-UID socket,
 `main::run_backup_subcommand` auto-starts a headless `pcloud -d` (no `-m`)
 **only if** saved credentials exist on the local DB. Otherwise it errors
-out with a hint to run `pcloud -u <email> -p` first.
+out with a hint telling the user to run `pcloud` once to complete the
+interactive web-login flow, or to supply a token non-interactively via
+`pcloud -t <token>` (or the `PCLOUD_AUTH_TOKEN` environment variable).
+After a successful login the token is persisted by default, so subsequent
+`pcloud backup ...` calls will auto-start a daemon.
 
 ## Debugging Tips
 
