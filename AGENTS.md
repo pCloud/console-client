@@ -109,8 +109,17 @@ use `tools/update-sqlite.sh <version>`.
 ### Build Commands
 
 ```bash
+# --- First-time setup after cloning ---
+
 # Initialize submodules (pclsync source)
 git submodule update --init
+
+# Activate the project's git hooks (one-time, per checkout).
+# Runs `cargo fmt --check`, `clippy -D warnings`, `cargo check`, `cargo test`
+# before every commit. See .githooks/pre-commit.
+git config core.hooksPath .githooks
+
+# --- Building ---
 
 # Debug build
 cargo build
@@ -118,8 +127,9 @@ cargo build
 # Release build
 cargo build --release
 
-# Run directly
-cargo run -- -u user@email.com -p -m /mnt/pcloud
+# Run directly (auth via --token, PCLOUD_AUTH_TOKEN env var, saved
+# token, or interactive web login — see `pcloud --help`)
+cargo run -- -m /mnt/pcloud
 
 # Install
 cargo install --path .
@@ -323,6 +333,16 @@ All FFI code follows these guidelines:
 - Run `cargo clippy` and address warnings
 - Keep unsafe blocks as small as possible
 - Document all safety invariants in unsafe blocks
+
+The project ships a pre-commit hook at `.githooks/pre-commit` that runs
+`cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo check`, and
+`cargo test`. Enable it once per checkout with:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+(Already covered in the "First-time setup" block under Build Commands.)
 
 ### Pull Request Checklist
 
