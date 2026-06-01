@@ -542,12 +542,20 @@ fn process_command(
         DaemonCommand::Ping => DaemonResponse::Pong,
 
         DaemonCommand::Status => match client.lock() {
-            Ok(c) => DaemonResponse::Status {
-                authenticated: c.is_logged_in(),
-                crypto_started: c.is_crypto_started(),
-                mounted: c.is_mounted(),
-                mountpoint: c.mountpoint().map(|p| p.to_string_lossy().to_string()),
-            },
+            Ok(mut c) => {
+                // `is_logged_in` / `is_crypto_started` / `is_mounted` return
+                // cached state; refresh against the C library so callers see
+                // the live mount status (the FUSE mount completes asynchronously
+                // after `start_sync`, so the cache is stale right after a fresh
+                // `start`).
+                c.refresh_all_state();
+                DaemonResponse::Status {
+                    authenticated: c.is_logged_in(),
+                    crypto_started: c.is_crypto_started(),
+                    mounted: c.is_mounted(),
+                    mountpoint: c.mountpoint().map(|p| p.to_string_lossy().to_string()),
+                }
+            }
             Err(e) => DaemonResponse::Error(format!("Failed to acquire client lock: {}", e)),
         },
 
