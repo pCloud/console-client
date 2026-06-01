@@ -1,47 +1,34 @@
-//! CLI argument parsing and command execution.
-//!
-//! This module handles:
-//! - Command-line argument parsing using clap
-//! - CLI command definitions and execution
-//! - User interaction (prompts, output formatting)
-//! - Authentication prompts
+//! CLI argument parsing and authentication prompts.
 //!
 //! # Submodules
 //!
-//! - `args`: Clap argument definitions and CLI struct
-//! - `commands`: Interactive command parsing and execution
-//! - `auth_prompt`: Interactive authentication prompts
+//! - `args`: clap subcommand tree for the hierarchical CLI
+//! - `auth_prompt`: interactive authentication prompts used by `auth login`
+//!   and other paths that need credentials
 //!
 //! # Example
 //!
 //! ```
-//! use console_client::cli::{Cli, InteractiveCommand};
+//! use console_client::cli::Cli;
 //!
 //! // Parse CLI arguments
 //! // let cli = Cli::parse_args();
-//!
-//! // Parse interactive commands
-//! let cmd = InteractiveCommand::parse("startcrypto");
-//! assert_eq!(cmd, InteractiveCommand::StartCrypto);
 //! ```
 
 pub mod args;
 pub mod auth_prompt;
-pub mod commands;
 
 // Re-export main types for convenience
-pub use args::{BackupArgs, BackupOp, Cli, Command};
+pub use args::{
+    default_mountpoint, resolve_mountpoint, AuthArgs, AuthOp, BackupArgs, BackupOp, Cli, Command,
+    CryptoArgs, CryptoOp, MountArgs, StartArgs,
+};
 pub use auth_prompt::{
     print_cli_auth_help, prompt_auth_choice, prompt_confirm, prompt_confirm_by_name, prompt_token,
     AuthChoice,
 };
-pub use commands::{CommandPrompt, InteractiveCommand};
 
 /// Initialize CLI module.
 ///
-/// This function can be used for any CLI-related initialization
-/// that needs to happen at startup.
-pub fn init() {
-    // Currently no initialization needed
-    // Future versions might set up terminal handling, etc.
-}
+/// Currently a no-op placeholder reserved for future setup work.
+pub fn init() {}

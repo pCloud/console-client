@@ -1,96 +1,57 @@
-//! CLI integration tests for pCloud console-client.
+//! CLI integration tests for the hierarchical pcloud-cli.
 //!
-//! These tests verify the CLI interface behavior using the compiled binary.
-//! They test argument parsing, help output, version information, and
-//! validation of argument combinations.
-//!
-//! # Note
-//!
-//! These tests run the actual binary and verify its output/exit codes.
-//! They do NOT test the actual pCloud sync functionality since that
-//! requires the pclsync library and network access.
+//! These tests verify the binary's argument parsing, help/version output,
+//! and rejection of the legacy flat-flag interface that the 3.x preview
+//! releases shipped with.
 
 use assert_cmd::cargo_bin_cmd;
 use assert_cmd::Command;
 use predicates::prelude::*;
 
-/// Get a Command instance for the console-client binary.
+/// Spawn the compiled `pcloud-cli` binary.
 fn pcloud_cmd() -> Command {
     cargo_bin_cmd!("pcloud-cli")
 }
 
 // ============================================================================
-// Help and Version Tests
+// --help / --version
 // ============================================================================
 
 #[test]
-fn test_help_flag_short() {
+fn help_short_flag_succeeds() {
     let mut cmd = pcloud_cmd();
     cmd.arg("-h")
         .assert()
         .success()
         .stdout(predicate::str::contains("pCloud Console Client"))
-        .stdout(predicate::str::contains("-t"))
-        .stdout(predicate::str::contains("--token"));
+        .stdout(predicate::str::contains("Usage"));
 }
 
 #[test]
-fn test_help_flag_long() {
+fn help_long_flag_shows_subcommands() {
     let mut cmd = pcloud_cmd();
     cmd.arg("--help")
         .assert()
         .success()
-        .stdout(predicate::str::contains("pCloud storage"))
-        .stdout(predicate::str::contains("FUSE"))
-        .stdout(predicate::str::contains("daemon"));
+        .stdout(predicate::str::contains("auth"))
+        .stdout(predicate::str::contains("mount"))
+        .stdout(predicate::str::contains("start"))
+        .stdout(predicate::str::contains("stop"))
+        .stdout(predicate::str::contains("status"))
+        .stdout(predicate::str::contains("crypto"))
+        .stdout(predicate::str::contains("backup"))
+        .stdout(predicate::str::contains("doctor"))
+        .stdout(predicate::str::contains("tui"));
 }
 
 #[test]
-fn test_help_shows_all_flags() {
-    let mut cmd = pcloud_cmd();
-    let output = cmd.arg("--help").assert().success();
-
-    // Verify all flags are documented
-    output
-        .stdout(predicate::str::contains("-t"))
-        .stdout(predicate::str::contains("--token"))
-        .stdout(predicate::str::contains("-c"))
-        .stdout(predicate::str::contains("--crypto"))
-        .stdout(predicate::str::contains("-d"))
-        .stdout(predicate::str::contains("--daemon"))
-        .stdout(predicate::str::contains("-o"))
-        .stdout(predicate::str::contains("--commands"))
-        .stdout(predicate::str::contains("-m"))
-        .stdout(predicate::str::contains("--mountpoint"))
-        .stdout(predicate::str::contains("-k"))
-        .stdout(predicate::str::contains("--client"))
-        .stdout(predicate::str::contains("--nosave"))
-        .stdout(predicate::str::contains("--logout"))
-        .stdout(predicate::str::contains("--unlink"));
-}
-
-#[test]
-fn test_help_does_not_show_removed_flags() {
-    let mut cmd = pcloud_cmd();
-    let assert = cmd.arg("--help").assert().success();
-
-    // These flags have been removed
-    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    assert!(!output.contains("--username"));
-    assert!(!output.contains("--password"));
-    assert!(!output.contains("--newuser"));
-    assert!(!output.contains("--savepassword"));
-    assert!(!output.contains("--passascrypto"));
-}
-
-#[test]
-fn test_version_flag_short() {
+fn version_short_flag_succeeds() {
     let mut cmd = pcloud_cmd();
     cmd.arg("-V").assert().success();
 }
 
 #[test]
-fn test_version_flag_long() {
+fn version_long_flag_mentions_binary_name() {
     let mut cmd = pcloud_cmd();
     cmd.arg("--version")
         .assert()
@@ -99,242 +60,183 @@ fn test_version_flag_long() {
 }
 
 // ============================================================================
-// Removed Flag Tests
+// Legacy flat flags must error
 // ============================================================================
 
 #[test]
-fn test_removed_username_flag_fails() {
+fn legacy_daemon_flag_fails() {
     let mut cmd = pcloud_cmd();
-    cmd.args(["-u", "test@example.com"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("error"));
+    cmd.arg("-d").assert().failure();
 }
 
 #[test]
-fn test_removed_password_flag_fails() {
+fn legacy_client_flag_fails() {
     let mut cmd = pcloud_cmd();
-    cmd.args(["-p"]).assert().failure();
+    cmd.arg("-k").assert().failure();
 }
 
 #[test]
-fn test_removed_newuser_flag_fails() {
+fn legacy_mountpoint_flag_fails() {
     let mut cmd = pcloud_cmd();
-    cmd.args(["-n"]).assert().failure();
-}
-
-// ============================================================================
-// Argument Conflict Tests
-// ============================================================================
-
-#[test]
-fn test_conflicting_daemon_and_client_flags() {
-    let mut cmd = pcloud_cmd();
-    cmd.args(["-d", "-k"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("Cannot use both"));
+    cmd.args(["-m", "/tmp/pcloud"]).assert().failure();
 }
 
 #[test]
-fn test_conflicting_daemon_and_client_long_flags() {
+fn legacy_token_flag_fails() {
     let mut cmd = pcloud_cmd();
-    cmd.args(["--daemon", "--client"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("daemon").or(predicate::str::contains("client")));
+    cmd.args(["-t", "abc"]).assert().failure();
 }
 
 #[test]
-fn test_logout_and_unlink_conflict() {
+fn legacy_commands_flag_fails() {
     let mut cmd = pcloud_cmd();
-    cmd.args(["--logout", "--unlink"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("--logout"));
+    cmd.arg("-o").assert().failure();
 }
 
 #[test]
-fn test_logout_conflicts_with_daemon() {
+fn legacy_crypto_flag_fails() {
     let mut cmd = pcloud_cmd();
-    cmd.args(["--logout", "-d"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("--logout"));
+    cmd.arg("-c").assert().failure();
 }
 
 #[test]
-fn test_unlink_conflicts_with_daemon() {
+fn legacy_doctor_flag_fails() {
     let mut cmd = pcloud_cmd();
-    cmd.args(["--unlink", "-d"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("--unlink"));
+    cmd.arg("--doctor").assert().failure();
 }
 
 #[test]
-fn test_logout_conflicts_with_client() {
+fn legacy_logout_flag_fails() {
     let mut cmd = pcloud_cmd();
-    cmd.args(["--logout", "-k"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("--logout"));
+    cmd.arg("--logout").assert().failure();
 }
 
 #[test]
-fn test_logout_conflicts_with_token() {
+fn legacy_unlink_flag_fails() {
     let mut cmd = pcloud_cmd();
-    cmd.args(["--logout", "-t", "token"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("--logout"));
+    cmd.arg("--unlink").assert().failure();
 }
 
 #[test]
-fn test_unlink_conflicts_with_crypto() {
+fn legacy_nosave_flag_fails() {
     let mut cmd = pcloud_cmd();
-    cmd.args(["--unlink", "-c"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("--unlink"));
+    cmd.arg("--nosave").assert().failure();
+}
+
+#[test]
+fn legacy_non_interactive_flag_fails() {
+    let mut cmd = pcloud_cmd();
+    cmd.arg("--non-interactive").assert().failure();
 }
 
 // ============================================================================
-// Mountpoint Argument Tests
+// auth subcommand
 // ============================================================================
 
 #[test]
-fn test_mountpoint_short_flag() {
+fn auth_help_lists_operations() {
     let mut cmd = pcloud_cmd();
-    cmd.args(["-m", "/tmp/pcloud"]).assert().failure(); // Expected - can't actually connect
-}
-
-#[test]
-fn test_mountpoint_long_flag() {
-    let mut cmd = pcloud_cmd();
-    cmd.args(["--mountpoint", "/tmp/pcloud"]).assert().failure(); // Expected - can't actually connect
-}
-
-// ============================================================================
-// Flag Combination Tests
-// ============================================================================
-
-#[test]
-fn test_valid_daemon_configuration() {
-    let mut cmd = pcloud_cmd();
-    // Daemon mode without conflicting flags should parse
-    cmd.args(["-d", "-m", "/tmp/pcloud"]).assert().failure(); // Expected - needs auth
-}
-
-#[test]
-fn test_valid_client_configuration() {
-    let mut cmd = pcloud_cmd();
-    // Client mode should parse
-    cmd.args(["-k"]).assert().failure(); // Expected - no daemon running
-}
-
-#[test]
-fn test_commands_mode_flag_parses() {
-    // Just verify -o is a valid flag by checking --help mentions it
-    let mut cmd = pcloud_cmd();
-    cmd.arg("--help")
+    cmd.args(["auth", "--help"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("--commands"));
+        .stdout(predicate::str::contains("login"))
+        .stdout(predicate::str::contains("logout"))
+        .stdout(predicate::str::contains("status"))
+        .stdout(predicate::str::contains("unlink"));
 }
 
 #[test]
-fn test_token_flag() {
+fn bare_auth_prints_help_to_stdout_and_exits_zero() {
     let mut cmd = pcloud_cmd();
-    cmd.args(["-t", "my-auth-token"]).assert().failure(); // Expected - can't actually connect
-}
-
-// ============================================================================
-// Nosave Flag Tests
-// ============================================================================
-
-#[test]
-fn test_nosave_flag() {
-    let mut cmd = pcloud_cmd();
-    // --nosave should parse successfully
-    cmd.args(["--nosave"]).assert().failure(); // Expected - can't actually connect
-}
-
-#[test]
-fn test_help_shows_nosave_flag() {
-    let mut cmd = pcloud_cmd();
-    cmd.arg("--help")
+    cmd.arg("auth")
         .assert()
         .success()
-        .stdout(predicate::str::contains("--nosave"));
+        .stdout(predicate::str::contains("Usage: pcloud-cli auth"))
+        .stdout(predicate::str::contains("login"))
+        .stdout(predicate::str::contains("unlink"));
 }
 
-// ============================================================================
-// Logout/Unlink Flag Tests
-// ============================================================================
-
 #[test]
-fn test_help_shows_logout_flag() {
+fn auth_login_help_documents_token_flag() {
     let mut cmd = pcloud_cmd();
-    cmd.arg("--help")
+    cmd.args(["auth", "login", "--help"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("--logout"));
+        .stdout(predicate::str::contains("--token"));
 }
 
 #[test]
-fn test_help_shows_unlink_flag() {
+fn auth_unlink_help_documents_yes_flag() {
     let mut cmd = pcloud_cmd();
-    cmd.arg("--help")
+    cmd.args(["auth", "unlink", "--help"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("--unlink"));
+        .stdout(predicate::str::contains("--yes"));
 }
 
 // ============================================================================
-// Error Message Quality Tests
+// mount / start subcommands
 // ============================================================================
 
 #[test]
-fn test_error_message_for_unknown_flag() {
+fn mount_help_documents_path_and_token() {
     let mut cmd = pcloud_cmd();
-    cmd.args(["--unknown-flag"])
+    cmd.args(["mount", "--help"])
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("error"));
+        .success()
+        .stdout(predicate::str::contains("PATH"))
+        .stdout(predicate::str::contains("--token"));
 }
 
 #[test]
-fn test_error_message_for_missing_value() {
+fn start_help_documents_path_and_token() {
     let mut cmd = pcloud_cmd();
-    cmd.args(["-t"])
+    cmd.args(["start", "--help"])
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("requires").or(predicate::str::contains("value")));
+        .success()
+        .stdout(predicate::str::contains("PATH"))
+        .stdout(predicate::str::contains("--token"));
 }
 
+// ============================================================================
+// crypto subcommand
+// ============================================================================
+
 #[test]
-fn test_error_message_for_empty_mountpoint() {
+fn crypto_help_lists_operations() {
     let mut cmd = pcloud_cmd();
-    cmd.args(["-m", ""]).assert().failure();
+    cmd.args(["crypto", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("start"))
+        .stdout(predicate::str::contains("stop"))
+        .stdout(predicate::str::contains("status"));
 }
 
-// ============================================================================
-// Edge Cases
-// ============================================================================
-
 #[test]
-fn test_mountpoint_with_spaces() {
+fn bare_crypto_prints_help_to_stdout_and_exits_zero() {
     let mut cmd = pcloud_cmd();
-    cmd.args(["-m", "/tmp/my pcloud folder"]).assert().failure(); // Will fail at runtime, but should parse
+    cmd.arg("crypto")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Usage: pcloud-cli crypto"));
+}
+
+#[test]
+fn crypto_start_help_documents_password_file_flag() {
+    let mut cmd = pcloud_cmd();
+    cmd.args(["crypto", "start", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--password-file"));
 }
 
 // ============================================================================
-// Backup Subcommand Tests
+// backup subcommand
 // ============================================================================
 
 #[test]
-fn test_backup_help_lists_all_subcommands() {
+fn backup_help_lists_all_operations() {
     let mut cmd = pcloud_cmd();
     cmd.args(["backup", "--help"])
         .assert()
@@ -348,7 +250,18 @@ fn test_backup_help_lists_all_subcommands() {
 }
 
 #[test]
-fn test_backup_add_help_documents_path_arg() {
+fn bare_backup_prints_help_to_stdout_and_exits_zero() {
+    let mut cmd = pcloud_cmd();
+    cmd.arg("backup")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Usage: pcloud-cli backup"))
+        .stdout(predicate::str::contains("add"))
+        .stdout(predicate::str::contains("stop-device"));
+}
+
+#[test]
+fn backup_add_help_documents_path_arg() {
     let mut cmd = pcloud_cmd();
     cmd.args(["backup", "add", "--help"])
         .assert()
@@ -357,17 +270,16 @@ fn test_backup_add_help_documents_path_arg() {
 }
 
 #[test]
-fn test_backup_add_without_path_fails() {
+fn backup_add_without_path_fails() {
     let mut cmd = pcloud_cmd();
     cmd.args(["backup", "add"]).assert().failure();
 }
 
 #[test]
-fn test_backup_add_with_no_daemon_and_no_creds_errors_with_hint() {
+fn backup_add_with_no_daemon_and_no_creds_errors() {
     use tempfile::TempDir;
 
-    // Use a throwaway HOME and XDG dirs so we don't trip over any real saved
-    // credentials in the test runner's environment.
+    // Throwaway HOME / XDG so we don't trip over real saved credentials.
     let home_dir = TempDir::new().expect("tempdir");
     let mut cmd = pcloud_cmd();
     cmd.env("HOME", home_dir.path())
@@ -379,10 +291,61 @@ fn test_backup_add_with_no_daemon_and_no_creds_errors_with_hint() {
         .failure();
 }
 
+// ============================================================================
+// Error message quality
+// ============================================================================
+
 #[test]
-fn test_backup_subcommand_rejects_daemon_flag() {
+fn unknown_subcommand_errors() {
     let mut cmd = pcloud_cmd();
-    cmd.args(["backup", "add", "/tmp/foo", "-d"])
+    cmd.arg("definitely-not-a-command")
         .assert()
-        .failure();
+        .failure()
+        .stderr(predicate::str::contains("error"));
+}
+
+#[test]
+fn unknown_flag_errors() {
+    let mut cmd = pcloud_cmd();
+    cmd.arg("--unknown-flag")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("error"));
+}
+
+#[test]
+fn token_without_value_errors() {
+    let mut cmd = pcloud_cmd();
+    cmd.args(["auth", "login", "--token"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("requires").or(predicate::str::contains("value")));
+}
+
+// ============================================================================
+// stop / status / doctor / tui
+// ============================================================================
+
+#[test]
+fn stop_help_succeeds() {
+    let mut cmd = pcloud_cmd();
+    cmd.args(["stop", "--help"]).assert().success();
+}
+
+#[test]
+fn status_help_succeeds() {
+    let mut cmd = pcloud_cmd();
+    cmd.args(["status", "--help"]).assert().success();
+}
+
+#[test]
+fn doctor_help_succeeds() {
+    let mut cmd = pcloud_cmd();
+    cmd.args(["doctor", "--help"]).assert().success();
+}
+
+#[test]
+fn tui_help_succeeds() {
+    let mut cmd = pcloud_cmd();
+    cmd.args(["tui", "--help"]).assert().success();
 }

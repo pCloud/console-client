@@ -155,83 +155,24 @@ mod tests {
         let _config = OverlayCallbackConfig::new();
     }
 
-    // Phase 6 tests - CLI argument parsing
+    // CLI argument parsing surface
     #[test]
-    fn test_cli_types_accessible() {
-        use cli::{Cli, CommandPrompt, InteractiveCommand};
-
-        // Test Cli default
-        let cli = Cli::default();
-        assert!(cli.auth_token.is_none());
-        assert!(!cli.daemonize);
-
-        // Test InteractiveCommand parsing
-        let cmd = InteractiveCommand::parse("startcrypto");
-        assert_eq!(cmd, InteractiveCommand::StartCrypto);
-
-        // Test CommandPrompt
-        let prompt = CommandPrompt::default();
-        assert_eq!(prompt.prompt(), "pcloud> ");
-    }
-
-    #[test]
-    fn test_cli_argument_validation() {
+    fn test_cli_default_yields_no_command() {
         use cli::Cli;
-
-        // Valid configuration
-        let valid_cli = Cli {
-            daemonize: true,
-            ..Default::default()
-        };
-        assert!(valid_cli.validate().is_ok());
-
-        // Invalid: daemon and client mode together
-        let invalid_cli = Cli {
-            daemonize: true,
-            commands_only: true,
-            ..Default::default()
-        };
-        assert!(invalid_cli.validate().is_err());
-
-        // Invalid: logout and unlink together
-        let invalid_cli2 = Cli {
-            logout: true,
-            unlink: true,
-            ..Default::default()
-        };
-        assert!(invalid_cli2.validate().is_err());
+        let cli = Cli::default();
+        assert!(cli.command.is_none());
     }
 
     #[test]
-    fn test_interactive_commands() {
-        use cli::InteractiveCommand;
-
-        // Test all command aliases
-        assert_eq!(
-            InteractiveCommand::parse("start"),
-            InteractiveCommand::StartCrypto
-        );
-        assert_eq!(
-            InteractiveCommand::parse("stop"),
-            InteractiveCommand::StopCrypto
-        );
-        assert_eq!(
-            InteractiveCommand::parse("fin"),
-            InteractiveCommand::Finalize
-        );
-        assert_eq!(InteractiveCommand::parse("s"), InteractiveCommand::Status);
-        assert_eq!(InteractiveCommand::parse("q"), InteractiveCommand::Quit);
-        assert_eq!(InteractiveCommand::parse("?"), InteractiveCommand::Help);
-
-        // Test exit commands
-        assert!(InteractiveCommand::Quit.is_exit_command());
-        assert!(InteractiveCommand::Finalize.is_exit_command());
-        assert!(!InteractiveCommand::Status.is_exit_command());
-
-        // Test crypto commands
-        assert!(InteractiveCommand::StartCrypto.is_crypto_command());
-        assert!(InteractiveCommand::StopCrypto.is_crypto_command());
-        assert!(!InteractiveCommand::Quit.is_crypto_command());
+    fn test_cli_parses_subcommands() {
+        use cli::{AuthArgs, AuthOp, Cli, Command};
+        let cli = Cli::parse_from_args(["pcloud-cli", "auth", "logout"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Auth(AuthArgs {
+                op: Some(AuthOp::Logout)
+            }))
+        ));
     }
 
     // Phase 6 tests - Security/Password handling

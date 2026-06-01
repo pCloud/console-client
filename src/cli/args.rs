@@ -1,22 +1,24 @@
 //! Command-line argument parsing for pCloud console client.
 //!
-//! This module provides CLI argument parsing using clap with derive macros.
+//! Hierarchical clap tree where every subcommand supports `--help`.
 //!
-//! # CLI Interface
+//! # Tree
 //!
 //! ```text
-//! -t <token>       Authentication token
-//! -c               Prompt for crypto password
-//! -d               Daemonize (background)
-//! -o               Commands mode (interactive)
-//! -m <path>        Mountpoint
-//! -k               Commands only (talk to existing daemon)
-//! --logout         Clear saved credentials
-//! --unlink         Clear all local data
-//! --nosave         Don't save credentials
+//! pcloud-cli                          # bare invocation → TUI
+//! pcloud-cli help [COMMAND]
+//! pcloud-cli auth   login|logout|status|unlink
+//! pcloud-cli mount  [PATH] [--token TOKEN]
+//! pcloud-cli start  [PATH] [--token TOKEN]
+//! pcloud-cli stop
+//! pcloud-cli status
+//! pcloud-cli crypto start|stop|status
+//! pcloud-cli backup add|list|remove|status|stop-device|root-name
+//! pcloud-cli tui
+//! pcloud-cli doctor
 //! ```
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 use clap::{Args, Parser, Subcommand};
@@ -35,7 +37,7 @@ fn build_version_string() -> String {
 
 static VERSION_STRING: LazyLock<String> = LazyLock::new(build_version_string);
 
-/// Build the after_long_help text including build info.
+/// Build the after_long_help text including env vars and build info.
 fn build_after_help() -> String {
     let commit = option_env!("PCLOUD_GIT_COMMIT_SHORT").unwrap_or("unknown");
     let pclsync_ver = option_env!("PSYNC_LIB_VERSION").unwrap_or("unknown");
@@ -43,11 +45,11 @@ fn build_after_help() -> String {
     format!(
         "\
 ENVIRONMENT VARIABLES:\n\
-    PCLOUD_AUTH_TOKEN       Auth token (alternative to -t)\n\
-    PCLOUD_AUTH_TOKEN_FILE  Path to file containing auth token\n\
-    PCLOUD_CRYPTO_PASS     Crypto password (auto-enables crypto)\n\
-    PCLOUD_CRYPTO_PASS_FILE Path to file containing crypto password\n\
-    PCLOUD_MOUNTPOINT      Mountpoint path (alternative to -m)\n\n\
+    PCLOUD_AUTH_TOKEN        Auth token (ephemeral; never saved)\n\
+    PCLOUD_AUTH_TOKEN_FILE   Path to file containing auth token\n\
+    PCLOUD_CRYPTO_PASS       Crypto password (consumed by `crypto start`)\n\
+    PCLOUD_CRYPTO_PASS_FILE  Path to file containing crypto password\n\
+    PCLOUD_MOUNTPOINT        Default mountpoint for `mount` / `start` when PATH omitted\n\n\
     Direct env vars take priority over _FILE variants.\n\
     Env-sourced tokens are ephemeral and never saved to the database.\n\
     Secret env vars are cleared from the process after reading.\n\n\
@@ -60,120 +62,177 @@ BUILD INFO:\n\
 
 static AFTER_HELP: LazyLock<String> = LazyLock::new(build_after_help);
 
-/// pCloud Console Client - Mount pCloud storage as a local filesystem.
+/// pCloud Console Client — mount pCloud storage and manage backups.
 ///
-/// This client allows you to access your pCloud storage through a FUSE
-/// filesystem mount, with support for encrypted folders (Crypto) and
-/// background daemon operation.
-///
-/// # Authentication
-///
-/// If no credentials are provided, an interactive prompt will offer:
-/// - Web-based login (opens browser with QR code)
-/// - Auth token entry
+/// Bare invocation (no subcommand) launches the interactive TUI dashboard.
 #[derive(Parser, Debug, Clone, Default)]
 #[command(name = "pcloud-cli")]
 #[command(version = &**VERSION_STRING, about = "pCloud Console Client")]
-#[command(long_about = "Mount pCloud storage as a local filesystem.\n\n\
-    This client allows you to access your pCloud storage through a FUSE \
-    filesystem mount, with support for encrypted folders (Crypto) and \
-    background daemon operation.\n\n\
-    If no credentials are provided, an interactive authentication prompt \
-    will be displayed offering web-based login or auth token input.")]
+#[command(
+    long_about = "Mount pCloud storage as a local filesystem and manage backups.\n\n\
+        Bare `pcloud-cli` launches the interactive dashboard (TUI). Subcommands \
+        provide scriptable access to auth, mount/daemon lifecycle, crypto, status, \
+        and backups."
+)]
 #[command(after_long_help = &**AFTER_HELP)]
 pub struct Cli {
-    /// Use authentication token directly
-    ///
-    /// Bypasses interactive authentication.
-    /// The token can be obtained from pCloud account settings.
-    /// Can also be set via PCLOUD_AUTH_TOKEN or PCLOUD_AUTH_TOKEN_FILE env vars.
-    #[arg(short = 't', long = "token")]
-    pub auth_token: Option<String>,
-
-    /// Prompt for crypto password (interactive)
-    ///
-    /// Can also be set via PCLOUD_CRYPTO_PASS or PCLOUD_CRYPTO_PASS_FILE
-    /// env vars, which auto-enable crypto without this flag.
-    #[arg(short = 'c', long = "crypto")]
-    pub crypto_prompt: bool,
-
-    /// Run as daemon (background process)
-    #[arg(short = 'd', long = "daemon")]
-    pub daemonize: bool,
-
-    /// Enable interactive commands mode
-    #[arg(short = 'o', long = "commands")]
-    pub commands_mode: bool,
-
-    /// Mountpoint for FUSE filesystem
-    ///
-    /// Defaults to ~/pCloud if not specified.
-    /// Can also be set via the PCLOUD_MOUNTPOINT env var.
-    #[arg(short = 'm', long = "mountpoint")]
-    pub mountpoint: Option<PathBuf>,
-
-    /// Send commands to running daemon (client mode)
-    #[arg(short = 'k', long = "client")]
-    pub commands_only: bool,
-
-    /// Disable the TUI and use plain CLI output
-    ///
-    /// By default the client launches a terminal user interface (TUI).
-    /// Use this flag to get the classic line-oriented CLI behavior,
-    /// suitable for scripts and headless environments.
-    #[arg(long = "non-interactive")]
-    pub non_interactive: bool,
-
-    /// Do not save credentials between sessions
-    ///
-    /// By default, credentials are saved for automatic login on next run.
-    /// Use this flag to prevent saving credentials.
-    #[arg(long = "nosave")]
-    pub nosave: bool,
-
-    /// Log out and clear saved credentials
-    ///
-    /// Removes saved auth token from the local database but keeps
-    /// any synced data intact. The client exits after logging out.
-    #[arg(long = "logout")]
-    pub logout: bool,
-
-    /// Unlink account and clear all local data
-    ///
-    /// Removes saved credentials AND all local sync data.
-    /// This is destructive and cannot be undone. The client exits
-    /// after unlinking.
-    #[arg(long = "unlink")]
-    pub unlink: bool,
-
-    /// Run dependency and environment diagnostics
-    ///
-    /// Checks that all required shared libraries (FUSE, OpenSSL, SQLite, etc.)
-    /// are available, verifies FUSE access, and provides distro-specific
-    /// install commands for any missing dependencies.
-    #[arg(long = "doctor")]
-    pub doctor: bool,
-
-    /// Subcommand to execute (e.g. `backup`).
-    ///
-    /// When omitted, runs in the classic flag-driven mode
-    /// (foreground / daemon / client based on `-d` / `-k` / etc).
+    /// Subcommand to execute. If omitted, the interactive TUI is launched.
     #[command(subcommand)]
     pub command: Option<Command>,
 }
 
-/// Top-level CLI subcommand groups.
+/// Top-level subcommands.
 #[derive(Subcommand, Debug, Clone)]
 pub enum Command {
+    /// Manage pCloud authentication (login / logout / status / unlink).
+    Auth(AuthArgs),
+
+    /// Mount pCloud as a FUSE filesystem in the foreground.
+    ///
+    /// Blocks until interrupted (Ctrl+C). For background operation use `start`.
+    Mount(MountArgs),
+
+    /// Start the pCloud daemon (mounts the FUSE filesystem in background).
+    Start(StartArgs),
+
+    /// Stop the running pCloud daemon (graceful, waits for sync to finish).
+    Stop,
+
+    /// Print combined auth / mount / crypto / daemon status.
+    Status,
+
+    /// Manage the Crypto folder (unlock / lock / status).
+    Crypto(CryptoArgs),
+
     /// Manage pCloud backups for the current device.
     Backup(BackupArgs),
+
+    /// Launch the interactive TUI dashboard (same as no-argument invocation).
+    Tui,
+
+    /// Run dependency and environment diagnostics.
+    Doctor,
 }
 
+// ============================================================================
+// auth
+// ============================================================================
+
+/// Arguments for the `auth` subcommand group.
+///
+/// Bare `pcloud-cli auth` prints the group's help and exits cleanly,
+/// matching the behavior of `pcloud-cli auth --help`.
+#[derive(Args, Debug, Clone)]
+pub struct AuthArgs {
+    #[command(subcommand)]
+    pub op: Option<AuthOp>,
+}
+
+/// Authentication operations.
+#[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
+pub enum AuthOp {
+    /// Authenticate with pCloud (interactive web flow or non-interactive token).
+    ///
+    /// Without `--token`, opens the browser-based login flow and waits for
+    /// completion. With `--token`, persists the supplied token to the local
+    /// database. Either way, the saved token enables future commands to
+    /// auto-start a daemon without re-prompting.
+    Login {
+        /// Auth token (skips interactive flow and persists the token).
+        #[arg(short = 't', long = "token", value_name = "TOKEN")]
+        token: Option<String>,
+    },
+
+    /// Clear the saved auth token. Keeps local sync data.
+    Logout,
+
+    /// Show whether saved credentials exist locally.
+    Status,
+
+    /// Destructive: clear the saved token AND all local sync data.
+    Unlink {
+        /// Skip the interactive confirmation prompt.
+        #[arg(long = "yes")]
+        yes: bool,
+    },
+}
+
+// ============================================================================
+// mount / start
+// ============================================================================
+
+/// Arguments for the `mount` (foreground) subcommand.
+#[derive(Args, Debug, Clone)]
+pub struct MountArgs {
+    /// Mount path. Defaults to `$PCLOUD_MOUNTPOINT` or `~/pCloud`.
+    #[arg(value_name = "PATH")]
+    pub path: Option<PathBuf>,
+
+    /// Auth token to use for this session (overrides saved credentials).
+    ///
+    /// Env-sourced (`PCLOUD_AUTH_TOKEN` / `PCLOUD_AUTH_TOKEN_FILE`) tokens
+    /// are read automatically and are never persisted.
+    #[arg(short = 't', long = "token", value_name = "TOKEN")]
+    pub token: Option<String>,
+}
+
+/// Arguments for the `start` (background daemon) subcommand.
+#[derive(Args, Debug, Clone)]
+pub struct StartArgs {
+    /// Mount path. Defaults to `$PCLOUD_MOUNTPOINT` or `~/pCloud`.
+    #[arg(value_name = "PATH")]
+    pub path: Option<PathBuf>,
+
+    /// Auth token to use for this session (overrides saved credentials).
+    #[arg(short = 't', long = "token", value_name = "TOKEN")]
+    pub token: Option<String>,
+}
+
+// ============================================================================
+// crypto
+// ============================================================================
+
+/// Arguments for the `crypto` subcommand group.
+///
+/// Bare `pcloud-cli crypto` prints the group's help and exits cleanly.
+#[derive(Args, Debug, Clone)]
+pub struct CryptoArgs {
+    #[command(subcommand)]
+    pub op: Option<CryptoOp>,
+}
+
+/// Crypto folder operations.
+#[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
+pub enum CryptoOp {
+    /// Unlock the Crypto folder.
+    ///
+    /// Reads the password from `$PCLOUD_CRYPTO_PASS[_FILE]` if set, from
+    /// `--password-file` if provided, otherwise prompts interactively.
+    /// Auto-starts the daemon if saved credentials exist.
+    Start {
+        /// Read the crypto password from this file (newline-trimmed).
+        #[arg(long = "password-file", value_name = "FILE")]
+        password_file: Option<PathBuf>,
+    },
+
+    /// Lock the Crypto folder.
+    Stop,
+
+    /// Show whether the Crypto folder is unlocked.
+    Status,
+}
+
+// ============================================================================
+// backup
+// ============================================================================
+
 /// Arguments for the `backup` subcommand group.
+///
+/// Bare `pcloud-cli backup` prints the group's help and exits cleanly.
 #[derive(Args, Debug, Clone)]
 pub struct BackupArgs {
     #[command(subcommand)]
-    pub op: BackupOp,
+    pub op: Option<BackupOp>,
 }
 
 /// Individual backup operations.
@@ -202,32 +261,22 @@ pub enum BackupOp {
     RootName,
 }
 
+// ============================================================================
+// parsing entry points + shared helpers
+// ============================================================================
+
 impl Cli {
-    /// Parse arguments from command line.
-    ///
-    /// This is a convenience wrapper around `clap::Parser::parse()`.
-    ///
-    /// # Panics
-    ///
-    /// Will exit the process with an error message if required arguments
-    /// are missing or invalid.
+    /// Parse arguments from the process command line, exiting on error.
     pub fn parse_args() -> Self {
         Self::parse()
     }
 
-    /// Try to parse arguments from command line, returning an error on failure.
-    ///
-    /// Unlike `parse_args()`, this method returns a Result instead of
-    /// exiting the process on error.
+    /// Parse arguments from the process command line, returning a clap error.
     pub fn try_parse_args() -> Result<Self, clap::Error> {
         Self::try_parse()
     }
 
-    /// Parse arguments from an iterator (useful for testing).
-    ///
-    /// # Arguments
-    ///
-    /// * `args` - Iterator of string arguments (including program name as first element)
+    /// Parse arguments from an iterator (useful for tests).
     pub fn parse_from_args<I, T>(args: I) -> Self
     where
         I: IntoIterator<Item = T>,
@@ -236,7 +285,7 @@ impl Cli {
         Self::parse_from(args)
     }
 
-    /// Try to parse arguments from an iterator, returning an error on failure.
+    /// Try to parse arguments from an iterator, returning a clap error.
     pub fn try_parse_from_args<I, T>(args: I) -> Result<Self, clap::Error>
     where
         I: IntoIterator<Item = T>,
@@ -244,198 +293,28 @@ impl Cli {
     {
         Self::try_parse_from(args)
     }
+}
 
-    /// Validate argument combinations.
-    ///
-    /// Some argument combinations are mutually exclusive or require
-    /// other arguments to be present. This method checks for these
-    /// conflicts and returns an error if any are found.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error string describing the conflict if validation fails.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use console_client::cli::Cli;
-    ///
-    /// let cli = Cli {
-    ///     daemonize: true,
-    ///     commands_only: true,  // Conflict!
-    ///     ..Default::default()
-    /// };
-    /// assert!(cli.validate().is_err());
-    /// ```
-    pub fn validate(&self) -> Result<(), String> {
-        // --doctor is a standalone diagnostic command
-        if self.doctor {
-            if self.daemonize {
-                return Err("Cannot use both --doctor and --daemon. \
-                    --doctor is a standalone diagnostic command."
-                    .to_string());
-            }
-            if self.commands_only {
-                return Err("Cannot use both --doctor and --client. \
-                    --doctor is a standalone diagnostic command."
-                    .to_string());
-            }
-            if self.logout {
-                return Err("Cannot use both --doctor and --logout. \
-                    --doctor is a standalone diagnostic command."
-                    .to_string());
-            }
-            if self.unlink {
-                return Err("Cannot use both --doctor and --unlink. \
-                    --doctor is a standalone diagnostic command."
-                    .to_string());
-            }
-        }
-
-        // Subcommands are mutually exclusive with the foreground/daemon/auth
-        // flags — the subcommand path either talks to an already-running
-        // daemon or auto-starts a headless one.
-        if self.command.is_some() {
-            let conflicts = self.daemonize
-                || self.commands_only
-                || self.commands_mode
-                || self.crypto_prompt
-                || self.auth_token.is_some()
-                || self.mountpoint.is_some()
-                || self.doctor
-                || self.logout
-                || self.unlink;
-            if conflicts {
-                return Err(
-                    "Subcommands cannot be combined with the foreground/daemon/auth flags. \
-                     Run the subcommand alone, e.g. `pcloud backup add /path`."
-                        .to_string(),
-                );
-            }
-            return Ok(());
-        }
-
-        // Can't use both -d (daemon) and -k (client/commands_only)
-        if self.daemonize && self.commands_only {
-            return Err("Cannot use both --daemon and --client mode. \
-                Use --daemon to start a new background service, \
-                or --client to connect to an existing daemon."
-                .to_string());
-        }
-
-        // --logout and --unlink are mutually exclusive
-        if self.logout && self.unlink {
-            return Err("Cannot use both --logout and --unlink. \
-                Use --logout to clear credentials only, \
-                or --unlink to clear all local data."
-                .to_string());
-        }
-
-        // --logout and --unlink are standalone operations
-        if self.logout || self.unlink {
-            let flag = if self.logout { "--logout" } else { "--unlink" };
-
-            if self.daemonize {
-                return Err(format!(
-                    "{} cannot be combined with --daemon. \
-                    Run {} as a standalone operation.",
-                    flag, flag
-                ));
-            }
-            if self.commands_only {
-                return Err(format!(
-                    "{} cannot be combined with --client. \
-                    Run {} as a standalone operation.",
-                    flag, flag
-                ));
-            }
-            if self.auth_token.is_some() {
-                return Err(format!(
-                    "{} cannot be combined with --token. \
-                    Run {} as a standalone operation.",
-                    flag, flag
-                ));
-            }
-            if self.crypto_prompt {
-                return Err(format!(
-                    "{} cannot be combined with --crypto. \
-                    Run {} as a standalone operation.",
-                    flag, flag
-                ));
-            }
-        }
-
-        Ok(())
+/// Resolve a mountpoint from a CLI-supplied path, the `PCLOUD_MOUNTPOINT`
+/// environment variable, or the `~/pCloud` default.
+pub fn resolve_mountpoint(cli_path: Option<&Path>) -> PathBuf {
+    if let Some(p) = cli_path {
+        return p.to_path_buf();
     }
-
-    /// Check if this is a "client only" invocation.
-    ///
-    /// Client mode connects to an existing daemon to send commands
-    /// rather than starting a new pCloud session.
-    pub fn is_client_mode(&self) -> bool {
-        self.commands_only
-    }
-
-    /// Check if crypto functionality is requested.
-    pub fn wants_crypto(&self) -> bool {
-        self.crypto_prompt
-    }
-
-    /// Check if interactive mode is requested.
-    ///
-    /// Interactive mode allows the user to send commands to the running
-    /// client (e.g., startcrypto, stopcrypto, finalize, quit).
-    pub fn wants_interactive(&self) -> bool {
-        self.commands_mode
-    }
-
-    /// Get the mountpoint, applying fallbacks if not specified.
-    ///
-    /// Priority: CLI `-m` > `PCLOUD_MOUNTPOINT` env var > ~/pCloud default.
-    pub fn get_mountpoint(&self) -> PathBuf {
-        if let Some(ref mp) = self.mountpoint {
-            return mp.clone();
-        }
-        if let Ok(env_mp) = std::env::var("PCLOUD_MOUNTPOINT") {
-            if !env_mp.is_empty() {
-                return PathBuf::from(env_mp);
-            }
-        }
-        Self::default_mountpoint()
-    }
-
-    /// Get the default mountpoint path.
-    ///
-    /// Returns ~/pCloud if HOME is set, otherwise /tmp/pCloud.
-    pub fn default_mountpoint() -> PathBuf {
-        if let Some(home) = std::env::var_os("HOME") {
-            PathBuf::from(home).join("pCloud")
-        } else {
-            PathBuf::from("/tmp/pCloud")
+    if let Ok(env_mp) = std::env::var("PCLOUD_MOUNTPOINT") {
+        if !env_mp.is_empty() {
+            return PathBuf::from(env_mp);
         }
     }
+    default_mountpoint()
+}
 
-    /// Check if credentials should be saved for future sessions.
-    ///
-    /// Returns `true` by default (save credentials). Returns `false` only
-    /// when `--nosave` is explicitly specified.
-    pub fn should_save_credentials(&self) -> bool {
-        !self.nosave
-    }
-
-    /// Check if this is a logout operation.
-    pub fn is_logout(&self) -> bool {
-        self.logout
-    }
-
-    /// Check if this is an unlink operation.
-    pub fn is_unlink(&self) -> bool {
-        self.unlink
-    }
-
-    /// Check if this is a doctor (diagnostics) operation.
-    pub fn is_doctor(&self) -> bool {
-        self.doctor
+/// The default mountpoint when no CLI path or env var is set.
+pub fn default_mountpoint() -> PathBuf {
+    if let Some(home) = std::env::var_os("HOME") {
+        PathBuf::from(home).join("pCloud")
+    } else {
+        PathBuf::from("/tmp/pCloud")
     }
 }
 
@@ -443,445 +322,411 @@ impl Cli {
 mod tests {
     use super::*;
 
+    // ------------------------------------------------------------------------
+    // Top-level parsing
+    // ------------------------------------------------------------------------
+
     #[test]
-    fn test_parse_no_args() {
+    fn no_args_yields_no_command() {
         let cli = Cli::parse_from_args(["pcloud-cli"]);
-        assert!(cli.auth_token.is_none());
-        assert!(!cli.daemonize);
-    }
-
-    #[test]
-    fn test_parse_token_flag() {
-        let cli = Cli::parse_from_args(["pcloud-cli", "-t", "my-auth-token"]);
-        assert_eq!(cli.auth_token, Some("my-auth-token".to_string()));
-    }
-
-    #[test]
-    fn test_parse_long_flags() {
-        let cli = Cli::parse_from_args([
-            "pcloud-cli",
-            "--token",
-            "my-token",
-            "--daemon",
-            "--mountpoint",
-            "/home/user/cloud",
-        ]);
-        assert_eq!(cli.auth_token, Some("my-token".to_string()));
-        assert!(cli.daemonize);
-        assert_eq!(cli.mountpoint, Some(PathBuf::from("/home/user/cloud")));
-    }
-
-    #[test]
-    fn test_parse_all_flags() {
-        let cli = Cli::parse_from_args([
-            "pcloud-cli",
-            "-t",
-            "token",
-            "-c",
-            "-d",
-            "-o",
-            "-m",
-            "/mnt/pcloud",
-        ]);
-        assert_eq!(cli.auth_token, Some("token".to_string()));
-        assert!(cli.crypto_prompt);
-        assert!(cli.daemonize);
-        assert!(cli.commands_mode);
-        assert_eq!(cli.mountpoint, Some(PathBuf::from("/mnt/pcloud")));
-    }
-
-    #[test]
-    fn test_conflicting_daemon_and_client() {
-        let cli = Cli {
-            daemonize: true,
-            commands_only: true,
-            ..Default::default()
-        };
-        let result = cli.validate();
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("daemon"));
-    }
-
-    #[test]
-    fn test_logout_and_unlink_conflict() {
-        let cli = Cli {
-            logout: true,
-            unlink: true,
-            ..Default::default()
-        };
-        let result = cli.validate();
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("--logout"));
-    }
-
-    #[test]
-    fn test_logout_conflicts_with_daemon() {
-        let cli = Cli {
-            logout: true,
-            daemonize: true,
-            ..Default::default()
-        };
-        let result = cli.validate();
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("--logout"));
-    }
-
-    #[test]
-    fn test_unlink_conflicts_with_client() {
-        let cli = Cli {
-            unlink: true,
-            commands_only: true,
-            ..Default::default()
-        };
-        let result = cli.validate();
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("--unlink"));
-    }
-
-    #[test]
-    fn test_logout_conflicts_with_token() {
-        let cli = Cli {
-            logout: true,
-            auth_token: Some("token".to_string()),
-            ..Default::default()
-        };
-        let result = cli.validate();
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("--logout"));
-    }
-
-    #[test]
-    fn test_unlink_conflicts_with_crypto() {
-        let cli = Cli {
-            unlink: true,
-            crypto_prompt: true,
-            ..Default::default()
-        };
-        let result = cli.validate();
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("--unlink"));
-    }
-
-    #[test]
-    fn test_logout_standalone_valid() {
-        let cli = Cli {
-            logout: true,
-            ..Default::default()
-        };
-        assert!(cli.validate().is_ok());
-        assert!(cli.is_logout());
-    }
-
-    #[test]
-    fn test_unlink_standalone_valid() {
-        let cli = Cli {
-            unlink: true,
-            ..Default::default()
-        };
-        assert!(cli.validate().is_ok());
-        assert!(cli.is_unlink());
-    }
-
-    #[test]
-    fn test_client_mode_flag() {
-        let cli = Cli {
-            commands_only: true,
-            ..Default::default()
-        };
-        assert!(cli.is_client_mode());
-    }
-
-    #[test]
-    fn test_wants_crypto() {
-        let cli1 = Cli {
-            crypto_prompt: true,
-            ..Default::default()
-        };
-        assert!(cli1.wants_crypto());
-
-        let cli2 = Cli::default();
-        assert!(!cli2.wants_crypto());
-    }
-
-    #[test]
-    fn test_default_mountpoint() {
-        let cli = Cli::default();
-        let mountpoint = cli.get_mountpoint();
-        // Should end with pCloud (not pCloudDrive anymore)
-        assert!(mountpoint.to_string_lossy().ends_with("pCloud"));
-    }
-
-    #[test]
-    fn test_custom_mountpoint() {
-        let cli = Cli {
-            mountpoint: Some(PathBuf::from("/custom/path")),
-            ..Default::default()
-        };
-        assert_eq!(cli.get_mountpoint(), PathBuf::from("/custom/path"));
-    }
-
-    #[test]
-    fn test_env_mountpoint() {
-        // CLI flag takes priority over env var
-        #[allow(unused_unsafe)]
-        unsafe {
-            std::env::set_var("PCLOUD_MOUNTPOINT", "/env/path");
-        }
-        let cli = Cli {
-            mountpoint: Some(PathBuf::from("/cli/path")),
-            ..Default::default()
-        };
-        assert_eq!(cli.get_mountpoint(), PathBuf::from("/cli/path"));
-
-        // Env var used when no CLI flag
-        let cli = Cli::default();
-        assert_eq!(cli.get_mountpoint(), PathBuf::from("/env/path"));
-
-        // Clean up
-        #[allow(unused_unsafe)]
-        unsafe {
-            std::env::remove_var("PCLOUD_MOUNTPOINT");
-        }
-    }
-
-    #[test]
-    fn test_default_values() {
-        let cli = Cli::default();
-        assert!(cli.auth_token.is_none());
-        assert!(!cli.crypto_prompt);
-        assert!(!cli.daemonize);
-        assert!(!cli.commands_mode);
-        assert!(cli.mountpoint.is_none());
-        assert!(!cli.commands_only);
-        assert!(!cli.non_interactive);
-        assert!(!cli.nosave);
-        assert!(!cli.logout);
-        assert!(!cli.unlink);
-        assert!(!cli.doctor);
-        assert!(cli.should_save_credentials());
-    }
-
-    #[test]
-    fn test_should_save_credentials_default() {
-        let cli = Cli::default();
-        assert!(cli.should_save_credentials());
-    }
-
-    #[test]
-    fn test_should_save_credentials_nosave() {
-        let cli = Cli {
-            nosave: true,
-            ..Default::default()
-        };
-        assert!(!cli.should_save_credentials());
-    }
-
-    #[test]
-    fn test_parse_nosave_flag() {
-        let cli = Cli::parse_from_args(["pcloud-cli", "--nosave"]);
-        assert!(cli.nosave);
-        assert!(!cli.should_save_credentials());
-    }
-
-    #[test]
-    fn test_parse_logout_flag() {
-        let cli = Cli::parse_from_args(["pcloud-cli", "--logout"]);
-        assert!(cli.logout);
-        assert!(cli.is_logout());
-    }
-
-    #[test]
-    fn test_parse_unlink_flag() {
-        let cli = Cli::parse_from_args(["pcloud-cli", "--unlink"]);
-        assert!(cli.unlink);
-        assert!(cli.is_unlink());
-    }
-
-    #[test]
-    fn test_valid_daemon_with_mountpoint() {
-        let cli = Cli {
-            daemonize: true,
-            mountpoint: Some(PathBuf::from("/mnt/pcloud")),
-            ..Default::default()
-        };
-        assert!(cli.validate().is_ok());
-    }
-
-    #[test]
-    fn test_parse_doctor_flag() {
-        let cli = Cli::parse_from_args(["pcloud-cli", "--doctor"]);
-        assert!(cli.doctor);
-        assert!(cli.is_doctor());
-    }
-
-    #[test]
-    fn test_doctor_standalone_valid() {
-        let cli = Cli {
-            doctor: true,
-            ..Default::default()
-        };
-        assert!(cli.validate().is_ok());
-    }
-
-    #[test]
-    fn test_doctor_conflicts_with_daemon() {
-        let cli = Cli {
-            doctor: true,
-            daemonize: true,
-            ..Default::default()
-        };
-        let result = cli.validate();
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("--doctor"));
-    }
-
-    #[test]
-    fn test_doctor_conflicts_with_client() {
-        let cli = Cli {
-            doctor: true,
-            commands_only: true,
-            ..Default::default()
-        };
-        let result = cli.validate();
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("--doctor"));
-    }
-
-    #[test]
-    fn test_doctor_conflicts_with_logout() {
-        let cli = Cli {
-            doctor: true,
-            logout: true,
-            ..Default::default()
-        };
-        let result = cli.validate();
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("--doctor"));
-    }
-
-    #[test]
-    fn test_doctor_conflicts_with_unlink() {
-        let cli = Cli {
-            doctor: true,
-            unlink: true,
-            ..Default::default()
-        };
-        let result = cli.validate();
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("--doctor"));
-    }
-
-    #[test]
-    fn test_non_interactive_flag() {
-        let cli = Cli::parse_from_args(["pcloud-cli", "--non-interactive"]);
-        assert!(cli.non_interactive);
-    }
-
-    // ========================================================================
-    // Backup subcommand tests
-    // ========================================================================
-
-    #[test]
-    fn test_parse_no_subcommand_keeps_flat_mode() {
-        // Auth is web/token-only now; check that the classic flag-driven mode
-        // still parses with no subcommand present.
-        let cli = Cli::parse_from_args(["pcloud", "-t", "abc123", "-d"]);
         assert!(cli.command.is_none());
-        assert_eq!(cli.auth_token.as_deref(), Some("abc123"));
-        assert!(cli.daemonize);
     }
 
     #[test]
-    fn test_parse_backup_add() {
-        let cli = Cli::parse_from_args(["pcloud", "backup", "add", "/tmp/foo"]);
+    fn tui_subcommand_parses() {
+        let cli = Cli::parse_from_args(["pcloud-cli", "tui"]);
+        assert!(matches!(cli.command, Some(Command::Tui)));
+    }
+
+    #[test]
+    fn doctor_subcommand_parses() {
+        let cli = Cli::parse_from_args(["pcloud-cli", "doctor"]);
+        assert!(matches!(cli.command, Some(Command::Doctor)));
+    }
+
+    #[test]
+    fn stop_subcommand_parses() {
+        let cli = Cli::parse_from_args(["pcloud-cli", "stop"]);
+        assert!(matches!(cli.command, Some(Command::Stop)));
+    }
+
+    #[test]
+    fn status_subcommand_parses() {
+        let cli = Cli::parse_from_args(["pcloud-cli", "status"]);
+        assert!(matches!(cli.command, Some(Command::Status)));
+    }
+
+    #[test]
+    fn unknown_subcommand_fails() {
+        let res = Cli::try_parse_from_args(["pcloud-cli", "definitely-not-a-command"]);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn legacy_top_level_flags_are_rejected() {
+        // The flat -d / -t / -m / -k flags from previous versions must error,
+        // since they have been replaced by subcommands.
+        for argv in [
+            vec!["pcloud-cli", "-d"],
+            vec!["pcloud-cli", "-k"],
+            vec!["pcloud-cli", "-m", "/tmp/x"],
+            vec!["pcloud-cli", "-t", "TOKEN"],
+            vec!["pcloud-cli", "--logout"],
+            vec!["pcloud-cli", "--unlink"],
+            vec!["pcloud-cli", "--doctor"],
+            vec!["pcloud-cli", "--non-interactive"],
+            vec!["pcloud-cli", "--nosave"],
+        ] {
+            assert!(
+                Cli::try_parse_from_args(argv.iter().copied()).is_err(),
+                "expected clap to reject {:?}",
+                argv
+            );
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // auth
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn auth_login_parses() {
+        let cli = Cli::parse_from_args(["pcloud-cli", "auth", "login"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Auth(AuthArgs {
+                op: Some(AuthOp::Login { token: None })
+            }))
+        ));
+    }
+
+    #[test]
+    fn auth_login_with_token_parses() {
+        let cli = Cli::parse_from_args(["pcloud-cli", "auth", "login", "--token", "abc123"]);
+        match cli.command {
+            Some(Command::Auth(AuthArgs {
+                op: Some(AuthOp::Login { token: Some(t) }),
+            })) => assert_eq!(t, "abc123"),
+            other => panic!("expected auth login --token, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn auth_login_short_token_parses() {
+        let cli = Cli::parse_from_args(["pcloud-cli", "auth", "login", "-t", "abc"]);
+        match cli.command {
+            Some(Command::Auth(AuthArgs {
+                op: Some(AuthOp::Login { token: Some(t) }),
+            })) => assert_eq!(t, "abc"),
+            other => panic!("expected auth login -t, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn auth_logout_parses() {
+        let cli = Cli::parse_from_args(["pcloud-cli", "auth", "logout"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Auth(AuthArgs {
+                op: Some(AuthOp::Logout)
+            }))
+        ));
+    }
+
+    #[test]
+    fn auth_status_parses() {
+        let cli = Cli::parse_from_args(["pcloud-cli", "auth", "status"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Auth(AuthArgs {
+                op: Some(AuthOp::Status)
+            }))
+        ));
+    }
+
+    #[test]
+    fn auth_unlink_without_yes_parses() {
+        let cli = Cli::parse_from_args(["pcloud-cli", "auth", "unlink"]);
+        match cli.command {
+            Some(Command::Auth(AuthArgs {
+                op: Some(AuthOp::Unlink { yes }),
+            })) => assert!(!yes),
+            other => panic!("expected auth unlink, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn auth_unlink_with_yes_parses() {
+        let cli = Cli::parse_from_args(["pcloud-cli", "auth", "unlink", "--yes"]);
+        match cli.command {
+            Some(Command::Auth(AuthArgs {
+                op: Some(AuthOp::Unlink { yes }),
+            })) => assert!(yes),
+            other => panic!("expected auth unlink --yes, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn auth_bare_yields_none_op() {
+        let cli = Cli::parse_from_args(["pcloud-cli", "auth"]);
+        match cli.command {
+            Some(Command::Auth(AuthArgs { op: None })) => {}
+            other => panic!("expected bare auth → None op, got {:?}", other),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // mount / start
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn mount_without_path_parses() {
+        let cli = Cli::parse_from_args(["pcloud-cli", "mount"]);
+        match cli.command {
+            Some(Command::Mount(MountArgs { path, token })) => {
+                assert!(path.is_none());
+                assert!(token.is_none());
+            }
+            other => panic!("expected mount, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn mount_with_path_parses() {
+        let cli = Cli::parse_from_args(["pcloud-cli", "mount", "/mnt/pcloud"]);
+        match cli.command {
+            Some(Command::Mount(MountArgs { path, .. })) => {
+                assert_eq!(path, Some(PathBuf::from("/mnt/pcloud")));
+            }
+            other => panic!("expected mount /mnt/pcloud, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn mount_with_token_parses() {
+        let cli = Cli::parse_from_args(["pcloud-cli", "mount", "-t", "TOK"]);
+        match cli.command {
+            Some(Command::Mount(MountArgs { token, .. })) => {
+                assert_eq!(token.as_deref(), Some("TOK"));
+            }
+            other => panic!("expected mount -t, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn start_without_path_parses() {
+        let cli = Cli::parse_from_args(["pcloud-cli", "start"]);
+        match cli.command {
+            Some(Command::Start(StartArgs { path, token })) => {
+                assert!(path.is_none());
+                assert!(token.is_none());
+            }
+            other => panic!("expected start, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn start_with_path_and_token_parses() {
+        let cli = Cli::parse_from_args(["pcloud-cli", "start", "/mnt/pcloud", "--token", "TOK"]);
+        match cli.command {
+            Some(Command::Start(StartArgs { path, token })) => {
+                assert_eq!(path, Some(PathBuf::from("/mnt/pcloud")));
+                assert_eq!(token.as_deref(), Some("TOK"));
+            }
+            other => panic!("expected start, got {:?}", other),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // crypto
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn crypto_start_parses() {
+        let cli = Cli::parse_from_args(["pcloud-cli", "crypto", "start"]);
+        match cli.command {
+            Some(Command::Crypto(CryptoArgs {
+                op: Some(CryptoOp::Start { password_file }),
+            })) => assert!(password_file.is_none()),
+            other => panic!("expected crypto start, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn crypto_start_with_password_file_parses() {
+        let cli = Cli::parse_from_args([
+            "pcloud-cli",
+            "crypto",
+            "start",
+            "--password-file",
+            "/run/secrets/crypto",
+        ]);
+        match cli.command {
+            Some(Command::Crypto(CryptoArgs {
+                op: Some(CryptoOp::Start { password_file }),
+            })) => {
+                assert_eq!(password_file, Some(PathBuf::from("/run/secrets/crypto")));
+            }
+            other => panic!("expected crypto start --password-file, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn crypto_stop_parses() {
+        let cli = Cli::parse_from_args(["pcloud-cli", "crypto", "stop"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Crypto(CryptoArgs {
+                op: Some(CryptoOp::Stop)
+            }))
+        ));
+    }
+
+    #[test]
+    fn crypto_status_parses() {
+        let cli = Cli::parse_from_args(["pcloud-cli", "crypto", "status"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Crypto(CryptoArgs {
+                op: Some(CryptoOp::Status)
+            }))
+        ));
+    }
+
+    #[test]
+    fn crypto_bare_yields_none_op() {
+        let cli = Cli::parse_from_args(["pcloud-cli", "crypto"]);
+        match cli.command {
+            Some(Command::Crypto(CryptoArgs { op: None })) => {}
+            other => panic!("expected bare crypto → None op, got {:?}", other),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // backup (unchanged shape)
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn backup_add_parses() {
+        let cli = Cli::parse_from_args(["pcloud-cli", "backup", "add", "/tmp/foo"]);
         match cli.command {
             Some(Command::Backup(BackupArgs {
-                op: BackupOp::Add { path },
+                op: Some(BackupOp::Add { path }),
             })) => assert_eq!(path, PathBuf::from("/tmp/foo")),
             other => panic!("expected backup add, got {:?}", other),
         }
     }
 
     #[test]
-    fn test_parse_backup_list() {
-        let cli = Cli::parse_from_args(["pcloud", "backup", "list"]);
+    fn backup_list_parses() {
+        let cli = Cli::parse_from_args(["pcloud-cli", "backup", "list"]);
         assert!(matches!(
             cli.command,
-            Some(Command::Backup(BackupArgs { op: BackupOp::List }))
+            Some(Command::Backup(BackupArgs {
+                op: Some(BackupOp::List)
+            }))
         ));
     }
 
     #[test]
-    fn test_parse_backup_remove() {
-        let cli = Cli::parse_from_args(["pcloud", "backup", "remove", "5"]);
+    fn backup_remove_parses() {
+        let cli = Cli::parse_from_args(["pcloud-cli", "backup", "remove", "5"]);
         match cli.command {
             Some(Command::Backup(BackupArgs {
-                op: BackupOp::Remove { id },
+                op: Some(BackupOp::Remove { id }),
             })) => assert_eq!(id, 5),
             other => panic!("expected backup remove, got {:?}", other),
         }
     }
 
     #[test]
-    fn test_parse_backup_status_no_id() {
-        let cli = Cli::parse_from_args(["pcloud", "backup", "status"]);
+    fn backup_status_no_id_parses() {
+        let cli = Cli::parse_from_args(["pcloud-cli", "backup", "status"]);
         match cli.command {
             Some(Command::Backup(BackupArgs {
-                op: BackupOp::Status { id },
+                op: Some(BackupOp::Status { id }),
             })) => assert!(id.is_none()),
             other => panic!("expected backup status, got {:?}", other),
         }
     }
 
     #[test]
-    fn test_parse_backup_status_with_id() {
-        let cli = Cli::parse_from_args(["pcloud", "backup", "status", "7"]);
+    fn backup_status_with_id_parses() {
+        let cli = Cli::parse_from_args(["pcloud-cli", "backup", "status", "7"]);
         match cli.command {
             Some(Command::Backup(BackupArgs {
-                op: BackupOp::Status { id },
+                op: Some(BackupOp::Status { id }),
             })) => assert_eq!(id, Some(7)),
             other => panic!("expected backup status 7, got {:?}", other),
         }
     }
 
     #[test]
-    fn test_parse_backup_stop_device() {
-        let cli = Cli::parse_from_args(["pcloud", "backup", "stop-device"]);
+    fn backup_stop_device_parses() {
+        let cli = Cli::parse_from_args(["pcloud-cli", "backup", "stop-device"]);
         assert!(matches!(
             cli.command,
             Some(Command::Backup(BackupArgs {
-                op: BackupOp::StopDevice
+                op: Some(BackupOp::StopDevice)
             }))
         ));
     }
 
     #[test]
-    fn test_parse_backup_root_name() {
-        let cli = Cli::parse_from_args(["pcloud", "backup", "root-name"]);
+    fn backup_root_name_parses() {
+        let cli = Cli::parse_from_args(["pcloud-cli", "backup", "root-name"]);
         assert!(matches!(
             cli.command,
             Some(Command::Backup(BackupArgs {
-                op: BackupOp::RootName
+                op: Some(BackupOp::RootName)
             }))
         ));
     }
 
     #[test]
-    fn test_validate_backup_with_daemon_flag_fails() {
-        let parsed = Cli::try_parse_from_args(["pcloud", "backup", "add", "/tmp/foo", "-d"]);
-        // clap should accept the args (subcommand + global flag); validate()
-        // rejects the combination.
-        // If clap itself rejects the combination, that's also acceptable.
-        if let Ok(cli) = parsed {
-            let result = cli.validate();
-            assert!(result.is_err(), "expected validate() error");
-            assert!(result.unwrap_err().to_lowercase().contains("subcommand"));
+    fn backup_bare_yields_none_op() {
+        let cli = Cli::parse_from_args(["pcloud-cli", "backup"]);
+        match cli.command {
+            Some(Command::Backup(BackupArgs { op: None })) => {}
+            other => panic!("expected bare backup → None op, got {:?}", other),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // resolve_mountpoint
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn resolve_mountpoint_prefers_cli_path() {
+        let p = PathBuf::from("/custom/path");
+        assert_eq!(resolve_mountpoint(Some(&p)), PathBuf::from("/custom/path"));
+    }
+
+    #[test]
+    fn resolve_mountpoint_uses_env_when_cli_missing() {
+        // Use a single combined test so HOME mutation doesn't race other tests.
+        let original_env = std::env::var("PCLOUD_MOUNTPOINT").ok();
+        // SAFETY: tests run single-threaded with --test-threads=1 in CI; this
+        // env mutation is local to this test.
+        #[allow(unused_unsafe)]
+        unsafe {
+            std::env::set_var("PCLOUD_MOUNTPOINT", "/from-env");
+        }
+        assert_eq!(resolve_mountpoint(None), PathBuf::from("/from-env"));
+
+        // Restore prior state.
+        #[allow(unused_unsafe)]
+        unsafe {
+            match original_env {
+                Some(v) => std::env::set_var("PCLOUD_MOUNTPOINT", v),
+                None => std::env::remove_var("PCLOUD_MOUNTPOINT"),
+            }
         }
     }
 
     #[test]
-    fn test_validate_backup_subcommand_alone_ok() {
-        let cli = Cli::parse_from_args(["pcloud", "backup", "list"]);
-        assert!(cli.validate().is_ok());
+    fn default_mountpoint_ends_with_pcloud() {
+        let p = default_mountpoint();
+        assert!(p.to_string_lossy().ends_with("pCloud"));
     }
 }

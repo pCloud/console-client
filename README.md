@@ -180,84 +180,85 @@ Runtime dependencies: `fuse2`, `sqlite`, `openssl`, `zlib`, `systemd-libs`.
 
 ## Usage
 
-### Basic Usage
+`pcloud-cli` uses a hierarchical command tree. Every node supports `--help`,
+e.g. `pcloud-cli auth --help` or `pcloud-cli backup add --help`.
+
+### Quick start
 
 ```bash
-# Launch TUI dashboard (default mode)
-pcloud-cli -m /mnt/pcloud
+# Launch the interactive TUI dashboard (also runs on bare `pcloud-cli`)
+pcloud-cli
 
-# Mount with a specific token
-pcloud-cli -t <auth-token> -m /mnt/pcloud
+# Authenticate once — opens the browser-based login flow
+pcloud-cli auth login
 
-# With crypto support (prompts for crypto password)
-pcloud-cli -t <auth-token> -c -m /mnt/pcloud
+# ...or pass a token non-interactively (persisted)
+pcloud-cli auth login --token <auth-token>
 
-# Classic CLI mode (non-interactive, for scripts)
-pcloud-cli --non-interactive -t <auth-token> -m /mnt/pcloud
+# Foreground mount (blocks until Ctrl+C)
+pcloud-cli mount /mnt/pcloud
 
-# Interactive commands mode (classic CLI)
-pcloud-cli --non-interactive -t <auth-token> -o -m /mnt/pcloud
+# Background mount (daemonized; auto-mounts and listens on the IPC socket)
+pcloud-cli start /mnt/pcloud
+
+# Unlock the Crypto folder (auto-starts a daemon if needed)
+pcloud-cli crypto start
+
+# Check combined daemon / mount / auth / crypto state
+pcloud-cli status
+
+# Gracefully stop the daemon
+pcloud-cli stop
 ```
 
-### Daemon Mode
+### Daemon lifecycle
 
-Run pCloud client as a background service:
-
-```bash
-# Start as daemon
-pcloud-cli -t <auth-token> -d -m /mnt/pcloud
-
-# Send commands to running daemon
-pcloud-cli -k -o
-> startcrypto
-> stopcrypto
-> status
-> quit
-```
+- `pcloud-cli start [PATH]` — daemonizes, mounts the filesystem, listens for IPC.
+- `pcloud-cli stop` — sends `Finalize`; daemon waits for sync to finish and exits.
+- Commands that need a running daemon (`status`, `crypto *`, `backup *`) auto-spawn
+  `pcloud-cli start` when no daemon is alive **and** saved credentials exist.
 
 The daemon creates:
 - PID file at `/tmp/pcloud-cli-<uid>.pid`
 - Unix socket at `/tmp/pcloud-cli-<uid>.sock`
 
-To stop the daemon:
+### Command reference
 
-```bash
-# Graceful shutdown
-pcloud-cli -k -o
-> finalize
+| Command                                | Description                                  |
+|----------------------------------------|----------------------------------------------|
+| `pcloud-cli`                           | Launch the interactive TUI dashboard         |
+| `pcloud-cli tui`                       | Explicit TUI launcher                        |
+| `pcloud-cli auth login [--token TOK]`  | Interactive web login, or persist a token    |
+| `pcloud-cli auth logout`               | Clear saved token (keeps local sync data)    |
+| `pcloud-cli auth status`               | Report whether saved credentials exist       |
+| `pcloud-cli auth unlink [--yes]`       | Destructive: clear creds **and** local data  |
+| `pcloud-cli mount [PATH] [--token T]`  | Foreground mount (blocks)                    |
+| `pcloud-cli start [PATH] [--token T]`  | Background daemon mount                      |
+| `pcloud-cli stop`                      | Graceful daemon shutdown                     |
+| `pcloud-cli status`                    | Combined auth / mount / crypto / daemon state|
+| `pcloud-cli crypto start [--password-file FILE]` | Unlock the Crypto folder          |
+| `pcloud-cli crypto stop`               | Lock the Crypto folder                       |
+| `pcloud-cli crypto status`             | Show Crypto folder state                     |
+| `pcloud-cli backup add <PATH>`         | Register a folder as a backup                |
+| `pcloud-cli backup list`               | List backups for this device                 |
+| `pcloud-cli backup remove <ID>`        | Remove a backup by sync id                   |
+| `pcloud-cli backup status [<ID>]`      | Backup status (optional sync id filter)      |
+| `pcloud-cli backup stop-device`        | Stop all backups on the current device       |
+| `pcloud-cli backup root-name`          | Print the backup root folder name            |
+| `pcloud-cli doctor`                    | Dependency and environment diagnostics       |
 
-# Or using the PID file
-kill $(cat /tmp/pcloud-cli-$(id -u).pid)
-```
+### Environment variables
 
-### Command Reference
+| Variable                  | Effect                                                         |
+|---------------------------|----------------------------------------------------------------|
+| `PCLOUD_AUTH_TOKEN`       | Ephemeral auth token (read once, cleared, never saved)         |
+| `PCLOUD_AUTH_TOKEN_FILE`  | Path to a file containing an ephemeral auth token              |
+| `PCLOUD_CRYPTO_PASS`      | Crypto password consumed by `pcloud-cli crypto start`          |
+| `PCLOUD_CRYPTO_PASS_FILE` | Path to a file containing the crypto password                  |
+| `PCLOUD_MOUNTPOINT`       | Default mountpoint for `mount` / `start` when `PATH` is omitted|
 
-| Flag | Long              | Description                               |
-|------|-------------------|-------------------------------------------|
-| -t   | --token           | Authenticate with an auth token           |
-| -c   | --crypto          | Prompt for crypto password                |
-| -d   | --daemon          | Run as background daemon                  |
-| -o   | --commands        | Enable interactive command mode           |
-| -m   | --mountpoint      | Directory to mount pCloud (default: ~/pCloud) |
-| -k   | --client          | Send commands to running daemon           |
-|      | --non-interactive | Disable TUI, use plain CLI output         |
-|      | --nosave          | Do not save credentials between sessions  |
-|      | --logout          | Clear saved credentials and exit          |
-|      | --unlink          | Clear all local data and exit             |
-|      | --doctor          | Run dependency and environment diagnostics |
-
-### Interactive Commands
-
-When running with `-o` (commands mode) or `-k -o` (client mode):
-
-| Command           | Aliases       | Description                      |
-|-------------------|---------------|----------------------------------|
-| startcrypto       | start         | Unlock encrypted folders         |
-| stopcrypto        | stop          | Lock encrypted folders           |
-| status            | s             | Show current status              |
-| finalize          | fin           | Sync and exit gracefully         |
-| quit              | q, exit       | Exit immediately                 |
-| help              | h, ?          | Show help                        |
+Direct env vars take priority over `_FILE` variants. Env-sourced tokens are
+ephemeral and never persist to the local database.
 
 ## Architecture
 
@@ -268,8 +269,8 @@ src/
 |-- error.rs             # Error types (PCloudError, AuthError, etc.)
 |-- cli/                 # CLI argument parsing
 |   |-- mod.rs           # Module exports
-|   |-- args.rs          # Clap argument definitions (Cli struct)
-|   +-- commands.rs      # Interactive command parsing
+|   |-- args.rs          # Clap subcommand tree (Cli, Command, *Args / *Op)
+|   +-- auth_prompt.rs   # Interactive auth menu (web / token)
 |-- crash_reporting/     # Bugsnag crash reporting (feature-gated)
 |   |-- mod.rs           # Public API: init(), notify_error(), app_version()
 |   |-- config.rs        # Bugsnag client singleton and release stage
@@ -412,31 +413,31 @@ earlier v3.x preview releases of the Rust rewrite.
 
 ### What Changed
 
-| Area | C++ / earlier v3.x | Current |
+| Area | C++ / earlier v3.x previews | Current |
 |---|---|---|
 | **Binary name** | `pcloud` | `pcloud-cli` |
-| **Default mode** | Plain CLI | TUI dashboard (use `--non-interactive` for scripts) |
+| **Interface** | Flat flags (`-d`, `-k`, `-m`, `-t`, `-c`, `-o`, `--non-interactive`, `--logout`, `--unlink`, `--doctor`, `--nosave`) | Hierarchical subcommands (`auth`, `mount`, `start`, `stop`, `status`, `crypto`, `backup`, `tui`, `doctor`) |
+| **Default mode** | Plain CLI | TUI dashboard (`pcloud-cli` with no args) |
 | **Runtime paths** | `/tmp/pcloud-<uid>.pid`, `.sock` | `/tmp/pcloud-cli-<uid>.pid`, `.sock` |
-| **Credentials** | Saved only with `-s` | Saved by default; use `--nosave` to disable |
-| **Removed flags** | — | `-u`, `-p`, `-s`, `-n`, `-y` (use `-t`/`--token` or web login instead) |
-| **Error messages** | Terse C++ output | Structured Rust errors with context |
+| **Credentials** | Saved only with `-s` | Saved by default; use `PCLOUD_AUTH_TOKEN` env for ephemeral |
+| **Removed flags** | `-u`, `-p`, `-s`, `-n`, `-y` | All flat-mode flags (above) — replaced by subcommands |
+| **Removed REPL** | `-o` / `-k` interactive prompt | Dropped — every operation has a first-class subcommand |
 | **Exit codes** | Varied | Standardized (0 = success, non-zero = error) |
 
 ### Unchanged
 
 - IPC protocol is compatible (bincode over Unix socket, same command set)
 - Mountpoint and sync behavior identical (same pclsync library)
-- Interactive commands are the same (`startcrypto`, `stopcrypto`, `finalize`, `quit`)
-- Crypto folder support (`-c` / `--crypto`)
-- Daemon mode (`-d` / `--daemon`) and client mode (`-k` / `--client`)
+- Crypto folder support is preserved, now via `pcloud-cli crypto start`
 
 ### Step-by-Step Migration
 
 1. **Stop the old daemon**
    ```bash
-   # If the old C++ daemon is running:
-   kill $(cat /tmp/pcloud-$(id -u).pid) 2>/dev/null
-   rm -f /tmp/pcloud-$(id -u).pid /tmp/pcloud-$(id -u).sock
+   # If an older daemon is running:
+   kill $(cat /tmp/pcloud-$(id -u).pid 2>/dev/null) 2>/dev/null
+   kill $(cat /tmp/pcloud-cli-$(id -u).pid 2>/dev/null) 2>/dev/null
+   rm -f /tmp/pcloud-$(id -u).{pid,sock} /tmp/pcloud-cli-$(id -u).{pid,sock}
    ```
 
 2. **Install the new binary**
@@ -444,18 +445,27 @@ earlier v3.x preview releases of the Rust rewrite.
 
 3. **Update scripts and aliases**
    ```bash
-   # Before
-   pcloud -u user@email.com -p -d -m /mnt/pcloud
+   # Before (legacy flat flags)
+   pcloud -t <token> -d -m /mnt/pcloud
+   pcloud -k -o                          # client mode REPL
+   pcloud --logout                       # clear creds
+   pcloud --unlink                       # clear creds + local data
+   pcloud --doctor                       # diagnostics
 
-   # After — non-interactive mode for scripts
-   pcloud-cli --non-interactive -t <auth-token> -d -m /mnt/pcloud
+   # After (hierarchical subcommands)
+   pcloud-cli auth login --token <token> # persist token once
+   pcloud-cli start /mnt/pcloud          # background daemon
+   pcloud-cli status                     # was: -k -o then 'status'
+   pcloud-cli stop                       # was: -k -o then 'finalize'
+   pcloud-cli auth logout                # was: --logout
+   pcloud-cli auth unlink                # was: --unlink (use --yes to skip prompt)
+   pcloud-cli doctor                     # was: --doctor
    ```
 
 4. **Update systemd units** (if applicable)
    ```ini
-   # Change ExecStart binary path and flags
-   ExecStart=/usr/bin/pcloud-cli --non-interactive -t <token> -d -m /mnt/pcloud
-   # Update PIDFile path
+   ExecStart=/usr/bin/pcloud-cli start /mnt/pcloud
+   ExecStop=/usr/bin/pcloud-cli stop
    PIDFile=/tmp/pcloud-cli-%U.pid
    ```
 
@@ -465,12 +475,15 @@ earlier v3.x preview releases of the Rust rewrite.
 
 ### Compatibility Notes
 
-- The old `--tui` flag has been removed; TUI is now the default. Pass `--non-interactive`
-  to restore the classic line-oriented CLI behavior.
-- Authentication is now token-based. Obtain a token from your pCloud account settings
-  or use the interactive web login flow (available in both TUI and non-interactive modes).
-- Credentials are saved by default (equivalent to the old `-s` flag). Use `--nosave` to
-  prevent saving, or `--logout` to clear previously saved credentials.
+- The flat-flag interface (`-d`, `-k`, `-m`, `-t`, `-c`, `-o`, `--non-interactive`,
+  `--logout`, `--unlink`, `--doctor`, `--nosave`) is gone. All operations are
+  expressed as subcommands. `pcloud-cli --help` and `pcloud-cli <CMD> --help`
+  list everything available.
+- The in-daemon interactive REPL (entered with `-o` or `-k`) has been removed.
+  Use the proper subcommands (`pcloud-cli status`, `pcloud-cli crypto start`,
+  `pcloud-cli stop`, `pcloud-cli backup …`) instead.
+- Authentication is still token-based; obtain a token from pCloud account
+  settings or use `pcloud-cli auth login` for the browser-based flow.
 
 ## Supported Platforms
 
@@ -522,8 +535,9 @@ cat /tmp/pcloud-cli-$(id -u).pid
 kill $(cat /tmp/pcloud-cli-$(id -u).pid)
 ```
 
-**"Connection failed" in client mode**
-- Ensure a daemon is running with `-d` flag
+**"No daemon is running" / "Connection failed"**
+- Start a daemon: `pcloud-cli start [PATH]` (commands like `status`, `crypto *`,
+  `backup *` auto-start one if saved credentials exist)
 - Check socket file exists: `ls -la /tmp/pcloud-cli-$(id -u).sock`
 
 ### FUSE Issues on Linux
@@ -541,7 +555,7 @@ echo 'user_allow_other' | sudo tee -a /etc/fuse.conf
 
 ### macOS Code Signing
 
-When running on macOS, you may see security prompts. Allow the pcloud binary in:
+When running on macOS, you may see security prompts. Allow the `pcloud-cli` binary in:
 System Preferences > Security & Privacy > General
 
 ## License

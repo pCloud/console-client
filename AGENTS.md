@@ -128,9 +128,12 @@ cargo build
 # Release build
 cargo build --release
 
-# Run directly (auth via --token, PCLOUD_AUTH_TOKEN env var, saved
-# token, or interactive web login — see `pcloud --help`)
-cargo run -- -m /mnt/pcloud
+# Bare invocation launches the TUI dashboard. Use subcommands for
+# scripted access (see `pcloud-cli --help` and `pcloud-cli <CMD> --help`).
+cargo run -- mount /mnt/pcloud           # foreground mount
+cargo run -- start /mnt/pcloud           # background daemon
+cargo run -- auth login --token "$PCLOUD_AUTH_TOKEN"
+cargo run -- backup list
 
 # Install
 cargo install --path .
@@ -459,7 +462,8 @@ let err = FilesystemError::from_code(code);
 
 ### Socket Location
 
-- Path: `/tmp/pcloud-<uid>.sock`
+- Path: `/tmp/pcloud-cli-<uid>.sock`
+- PID file: `/tmp/pcloud-cli-<uid>.pid`
 - Permissions: 0600 (owner only)
 
 ### Message Format
@@ -495,25 +499,34 @@ let err = FilesystemError::from_code(code);
 - `BackupStatus(BackupStatusInfo)` - Response to `BackupStatus`
 - `BackupRootName(String)` - Response to `BackupRootName`
 
-### Backup CLI surface
+### Hierarchical CLI surface
+
+The binary is hierarchical — every node supports `--help`:
 
 ```
-pcloud backup add <PATH>      # register a folder as a backup
-pcloud backup list            # list backups for this device
-pcloud backup remove <ID>     # remove a backup by sync id
-pcloud backup stop-device     # stop all backups on this device
-pcloud backup status [<ID>]   # status summary (optional sync id filter)
-pcloud backup root-name       # print the backup root folder name
+pcloud-cli                          # bare invocation → TUI dashboard
+pcloud-cli auth   login [--token TOKEN] | logout | status | unlink [--yes]
+pcloud-cli mount  [PATH] [--token TOKEN]      # foreground mount, blocks
+pcloud-cli start  [PATH] [--token TOKEN]      # background daemon mount
+pcloud-cli stop                               # graceful daemon shutdown
+pcloud-cli status                             # daemon + auth + crypto state
+pcloud-cli crypto start [--password-file FILE] | stop | status
+pcloud-cli backup add <PATH> | list | remove <ID>
+                 | stop-device | status [<ID>] | root-name
+pcloud-cli tui                                # explicit TUI launcher
+pcloud-cli doctor                             # env / dependency diagnostics
 ```
 
-When `pcloud backup ...` runs and no daemon is alive on the per-UID socket,
-`main::run_backup_subcommand` auto-starts a headless `pcloud -d` (no `-m`)
-**only if** saved credentials exist on the local DB. Otherwise it errors
-out with a hint telling the user to run `pcloud` once to complete the
-interactive web-login flow, or to supply a token non-interactively via
-`pcloud -t <token>` (or the `PCLOUD_AUTH_TOKEN` environment variable).
+### Daemon auto-start
+
+When a command that needs a running daemon is invoked (`status`, `crypto *`,
+`backup *`) and no daemon is alive on the per-UID socket,
+`main::ensure_daemon_running` spawns a headless `pcloud-cli start`
+**only if** saved credentials exist in the local DB. If no credentials are
+saved, it errors with a hint telling the user to run `pcloud-cli auth login`
+once (interactive web flow) or to pass `--token` / set `PCLOUD_AUTH_TOKEN`.
 After a successful login the token is persisted by default, so subsequent
-`pcloud backup ...` calls will auto-start a daemon.
+calls auto-start a daemon.
 
 ## Debugging Tips
 
@@ -534,15 +547,14 @@ cargo clean && cargo build
 
 ```bash
 # Run with backtrace
-RUST_BACKTRACE=1 ./target/debug/pcloud -u user@email.com -p
+RUST_BACKTRACE=1 ./target/debug/pcloud-cli mount /tmp/pcloud
 
-# Debug daemon
-# 1. Don't daemonize, run in foreground with debug output
-cargo run -- -u user@email.com -p -o -m /mnt/pcloud
+# Debug daemon — run foreground instead so logs hit your terminal
+cargo run -- mount /tmp/pcloud
 
-# Check daemon status
-ls -la /tmp/pcloud-$(id -u).*
-cat /tmp/pcloud-$(id -u).pid
+# Check daemon status / socket files
+ls -la /tmp/pcloud-cli-$(id -u).*
+cat /tmp/pcloud-cli-$(id -u).pid
 ```
 
 ### FUSE Debugging

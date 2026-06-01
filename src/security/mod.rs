@@ -77,7 +77,7 @@ pub mod env;
 pub mod password;
 
 // Re-export main types and functions for convenience
-pub use env::ResolvedSecrets;
+pub use env::{resolve_auth_token, resolve_crypto_password, ResolvedSecrets};
 pub use password::{
     prompt_for_password, prompt_for_password_with_confirm,
     prompt_for_password_with_confirm_limited, zeroize_string, SecurePassword,
