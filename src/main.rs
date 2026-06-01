@@ -287,27 +287,32 @@ fn run_start_subcommand(args: StartArgs) -> Result<()> {
 
     let env_token = resolve_auth_token()?;
 
-    // Determine authentication. Interactive auth must complete BEFORE
-    // daemonizing because we lose the controlling terminal after fork.
-    {
+    // Pre-fork: only run the interactive auth flow if absolutely necessary
+    // (the controlling terminal is gone after fork). For CLI / env-supplied
+    // tokens we DEFER `set_auth_token` until after the fork — `psync_set_auth`
+    // touches the SQLite settings table, and SQLite handles are not fork-safe.
+    let deferred_token: Option<SecretString> = if let Some(t) = args.token.as_deref() {
+        Some(SecretString::from(t.to_string()))
+    } else if let Some(t) = env_token {
+        Some(t)
+    } else {
         let guard = client
             .lock()
             .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
-        if args.token.is_none() && env_token.is_none() && !guard.has_saved_credentials() {
-            drop(guard);
+        let has_creds = guard.has_saved_credentials();
+        drop(guard);
+        if !has_creds {
             print_status(
                 StatusIndicator::Info,
                 "Authentication required before daemon can start",
             );
             handle_interactive_auth(&client, /* save = */ true)?;
         }
-    }
-    apply_auth(
-        &client,
-        args.token.as_deref(),
-        env_token,
-        /* save = */ true,
-    )?;
+        None
+    };
+    // Whether the deferred token came from a CLI flag (persist) or from the env
+    // (ephemeral, never persisted). `args.token` having a value wins.
+    let save_deferred_token = args.token.is_some();
 
     let mountpoint = resolve_mountpoint(args.path.as_deref());
     println!();
@@ -322,6 +327,15 @@ fn run_start_subcommand(args: StartArgs) -> Result<()> {
 
     setup_daemon_signals()?;
     register_status_callback(|_status| {});
+
+    // Apply the deferred CLI/env token post-fork so the SQLite write happens
+    // in the child's address space.
+    if let Some(ref token) = deferred_token {
+        let mut guard = client
+            .lock()
+            .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
+        guard.set_auth_token(token, save_deferred_token)?;
+    }
 
     {
         let mut guard = client
