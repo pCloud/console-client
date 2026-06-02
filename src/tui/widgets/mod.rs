@@ -1,6 +1,9 @@
 pub mod about_screen;
 pub mod activity_log;
 pub mod auth_screen;
+pub mod backup_confirm;
+pub mod backup_input;
+pub mod backups_screen;
 pub mod crypto_panel;
 pub mod header;
 pub mod help_bar;

@@ -55,12 +55,30 @@ pub fn render(frame: &mut Frame, state: &TuiState, area: Rect) {
                 Span::styled("Cancel", theme::key_desc_style()),
             ]
         }
+        InputMode::BackupAdd => {
+            vec![
+                Span::styled(" Enter ", theme::key_hint_style()),
+                Span::styled("Submit  ", theme::key_desc_style()),
+                Span::styled("Esc ", theme::key_hint_style()),
+                Span::styled("Cancel", theme::key_desc_style()),
+            ]
+        }
+        InputMode::BackupRemoveConfirm | InputMode::BackupStopDeviceConfirm => {
+            vec![
+                Span::styled(" y ", theme::key_hint_style()),
+                Span::styled("Confirm  ", theme::key_desc_style()),
+                Span::styled("N ", theme::key_hint_style()),
+                Span::styled("Cancel  ", theme::key_desc_style()),
+                Span::styled("Esc ", theme::key_hint_style()),
+                Span::styled("Cancel", theme::key_desc_style()),
+            ]
+        }
         InputMode::Normal => match state.active_screen {
             Screen::Dashboard => {
                 let mut spans = vec![
                     Span::styled(" q ", theme::key_hint_style()),
                     Span::styled("Quit  ", theme::key_desc_style()),
-                    Span::styled("1/2/3 ", theme::key_hint_style()),
+                    Span::styled("1-4 ", theme::key_hint_style()),
                     Span::styled("Tabs  ", theme::key_desc_style()),
                     Span::styled("Tab ", theme::key_hint_style()),
                     Span::styled("Switch  ", theme::key_desc_style()),
@@ -102,24 +120,38 @@ pub fn render(frame: &mut Frame, state: &TuiState, area: Rect) {
                 ]);
                 spans
             }
+            Screen::Backups => {
+                vec![
+                    Span::styled(" q ", theme::key_hint_style()),
+                    Span::styled("Quit  ", theme::key_desc_style()),
+                    Span::styled("1-4 ", theme::key_hint_style()),
+                    Span::styled("Tabs  ", theme::key_desc_style()),
+                    Span::styled("\u{2191}\u{2193} ", theme::key_hint_style()),
+                    Span::styled("Select  ", theme::key_desc_style()),
+                    Span::styled("a ", theme::key_hint_style()),
+                    Span::styled("Add  ", theme::key_desc_style()),
+                    Span::styled("d ", theme::key_hint_style()),
+                    Span::styled("Remove  ", theme::key_desc_style()),
+                    Span::styled("S ", theme::key_hint_style()),
+                    Span::styled("Stop-device  ", theme::key_desc_style()),
+                    Span::styled("r ", theme::key_hint_style()),
+                    Span::styled("Refresh", theme::key_desc_style()),
+                ]
+            }
             Screen::Help => {
                 vec![
                     Span::styled(" q ", theme::key_hint_style()),
                     Span::styled("Quit  ", theme::key_desc_style()),
-                    Span::styled("1 ", theme::key_hint_style()),
-                    Span::styled("Dashboard  ", theme::key_desc_style()),
-                    Span::styled("2 ", theme::key_hint_style()),
-                    Span::styled("Help  ", theme::key_desc_style()),
-                    Span::styled("3 ", theme::key_hint_style()),
-                    Span::styled("About", theme::key_desc_style()),
+                    Span::styled("1-4 ", theme::key_hint_style()),
+                    Span::styled("Tabs", theme::key_desc_style()),
                 ]
             }
             Screen::About => {
                 vec![
                     Span::styled(" q ", theme::key_hint_style()),
                     Span::styled("Quit  ", theme::key_desc_style()),
-                    Span::styled("1 ", theme::key_hint_style()),
-                    Span::styled("Dashboard  ", theme::key_desc_style()),
+                    Span::styled("1-4 ", theme::key_hint_style()),
+                    Span::styled("Tabs  ", theme::key_desc_style()),
                     Span::styled("Tab ", theme::key_hint_style()),
                     Span::styled("Navigate  ", theme::key_desc_style()),
                     Span::styled("Enter ", theme::key_hint_style()),

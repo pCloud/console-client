@@ -7,7 +7,7 @@ use crate::ffi::types::{
     is_error_status, pstatus_t, status_to_string, PSTATUS_LOGIN_REQUIRED, PSTATUS_PAUSED,
     PSTATUS_STOPPED,
 };
-use crate::wrapper::{AuthState, CryptoState};
+use crate::wrapper::{AuthState, BackupInfo, CryptoState};
 
 /// High-level state of the sync engine, derived from `pstatus_t.status`.
 ///
@@ -99,6 +99,7 @@ pub struct ActivityEntry {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Screen {
     Dashboard,
+    Backups,
     Help,
     About,
 }
@@ -164,6 +165,12 @@ pub enum InputMode {
     HintPrompt,
     /// Confirming account unlink (destructive)
     UnlinkConfirm,
+    /// Typing the local folder path for a new backup
+    BackupAdd,
+    /// Confirming removal of the selected backup
+    BackupRemoveConfirm,
+    /// Confirming stopping ALL backups on this device (destructive)
+    BackupStopDeviceConfirm,
 }
 
 /// Which crypto action we're collecting a password for.
@@ -206,6 +213,14 @@ pub struct TuiState {
     pub status_message: Option<(String, StatusMessageKind)>,
     pub status_message_at: Option<Instant>,
     pub about_focus: Option<AboutFocus>,
+    /// Backups configured for the current device (Backups screen).
+    pub backups: Vec<BackupInfo>,
+    /// Device backup root folder name (shown on the Backups screen).
+    pub backup_root_name: Option<String>,
+    /// Selection state for the backups list.
+    pub backup_list_state: ListState,
+    /// Last error encountered while loading backups, shown in-panel.
+    pub backup_error: Option<String>,
     /// Vertical scroll offset for screens with overflow (e.g. QR code).
     pub scroll_offset: u16,
     /// One-shot flag: clear the frame buffer on the next render cycle.
@@ -236,10 +251,35 @@ impl TuiState {
             input_buffer: String::new(),
             password_stash: None,
             about_focus: None,
+            backups: Vec::new(),
+            backup_root_name: None,
+            backup_list_state: ListState::default(),
+            backup_error: None,
             status_message: None,
             status_message_at: None,
             scroll_offset: 0,
             needs_clear: false,
+        }
+    }
+
+    /// The currently selected backup on the Backups screen, if any.
+    pub fn selected_backup(&self) -> Option<&BackupInfo> {
+        self.backup_list_state
+            .selected()
+            .and_then(|i| self.backups.get(i))
+    }
+
+    /// Clamp the backups selection to the current list length.
+    ///
+    /// Keeps a valid selection when the list shrinks/grows, and selects the
+    /// first row when the list becomes non-empty but nothing was selected.
+    pub fn clamp_backup_selection(&mut self) {
+        let len = self.backups.len();
+        if len == 0 {
+            self.backup_list_state.select(None);
+        } else {
+            let idx = self.backup_list_state.selected().unwrap_or(0).min(len - 1);
+            self.backup_list_state.select(Some(idx));
         }
     }
 

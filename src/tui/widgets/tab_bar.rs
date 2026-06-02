@@ -9,8 +9,9 @@ use crate::tui::theme;
 pub fn render(frame: &mut Frame, state: &TuiState, area: Rect) {
     let tabs = [
         ("1", "Dashboard", Screen::Dashboard),
-        ("2", "Help", Screen::Help),
-        ("3", "About", Screen::About),
+        ("2", "Backups", Screen::Backups),
+        ("3", "Help", Screen::Help),
+        ("4", "About", Screen::About),
     ];
 
     let mut spans = Vec::new();

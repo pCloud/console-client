@@ -38,6 +38,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     match state.active_screen {
         Screen::Dashboard => render_dashboard(frame, app, outer[1]),
+        Screen::Backups => widgets::backups_screen::render(frame, &mut app.state, outer[1]),
         Screen::Help => widgets::help_screen::render(frame, outer[1]),
         Screen::About => widgets::about_screen::render(frame, &app.state, outer[1]),
     }
@@ -54,6 +55,17 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     if app.state.input_mode == InputMode::UnlinkConfirm {
         widgets::unlink_confirm::render(frame, &app.state);
+    }
+
+    if app.state.input_mode == InputMode::BackupAdd {
+        widgets::backup_input::render(frame, &app.state);
+    }
+
+    if matches!(
+        app.state.input_mode,
+        InputMode::BackupRemoveConfirm | InputMode::BackupStopDeviceConfirm
+    ) {
+        widgets::backup_confirm::render(frame, &app.state);
     }
 }
 

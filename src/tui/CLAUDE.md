@@ -48,6 +48,9 @@ src/tui/
     |-- auth_screen.rs  # Full-screen auth flow (menu, token input, web/QR wait)
     |-- password_input.rs  # Modal popup for crypto password/hint entry
     |-- unlink_confirm.rs  # Modal popup for destructive unlink confirmation
+    |-- backups_screen.rs  # Backups tab: device root + selectable backups list
+    |-- backup_input.rs    # Modal popup for entering a new backup's folder path
+    |-- backup_confirm.rs  # Modal popup for remove / stop-device confirmation
     |-- help_screen.rs  # Static help/shortcuts reference page
     +-- about_screen.rs # Version info and links page
 ```
@@ -100,18 +103,19 @@ All `PCloudClient` access goes through `Arc<Mutex<PCloudClient>>`. Keep lock sco
 ```
 
 - Auth screens (`AuthMenu`, `AuthToken`, `AuthWebWaiting`) take over the full screen; the dashboard is not rendered.
-- `PasswordPrompt`, `HintPrompt`, and `UnlinkConfirm` render as modal overlays on top of the dashboard.
+- `PasswordPrompt`, `HintPrompt`, `UnlinkConfirm`, `BackupAdd`, `BackupRemoveConfirm`, and `BackupStopDeviceConfirm` render as modal overlays on top of the active screen.
 - When transitioning from a full-screen auth view back to the dashboard, set `state.needs_clear = true` to wipe stale cell artifacts.
 
 ## Screens and Tabs
 
-The UI has three top-level screens, switchable via number keys:
+The UI has four top-level screens, switchable via number keys:
 
 | Key | Screen | Content |
 |-----|--------|---------|
 | `1` | Dashboard | Live sync status, panels, activity log |
-| `2` | Help | Keyboard shortcuts, support links |
-| `3` | About | Version info, build hashes, license |
+| `2` | Backups | Device backup root + add/remove/stop-device |
+| `3` | Help | Keyboard shortcuts, support links |
+| `4` | About | Version info, build hashes, license |
 
 The `tab_bar` widget renders the tab selector. The `help_bar` widget adapts its content based on both `InputMode` and `Screen`.
 
@@ -122,7 +126,7 @@ The `tab_bar` widget renders the tab selector. The `help_bar` widget adapts its 
 |-----|--------|
 | `q` / `Q` | Quit |
 | `Ctrl+C` | Quit |
-| `1` / `2` / `3` | Switch screen |
+| `1` / `2` / `3` / `4` | Switch screen |
 | `Tab` / `Shift+Tab` | Cycle panel focus |
 | `Up` / `k` | Scroll activity log up |
 | `Down` / `j` | Scroll activity log down |
@@ -140,12 +144,21 @@ The `tab_bar` widget renders the tab selector. The `help_bar` widget adapts its 
 | `Esc` | Back / cancel |
 | `Up/Down` | Scroll QR code view |
 
+### Backups screen
+| Key | Action |
+|-----|--------|
+| `Up` / `Down` (`k`/`j`) | Select a backup |
+| `a` | Add a folder to back up (path input modal) |
+| `d` / `Delete` | Remove the selected backup (confirm) |
+| `S` | Stop all backups on this device (confirm) |
+| `r` | Refresh the backups list |
+
 ### Modal prompts
 | Key | Action |
 |-----|--------|
-| `Enter` | Submit password/hint |
+| `Enter` | Submit password/hint/backup path |
 | `Esc` | Cancel |
-| `y` / `N` | Confirm/cancel unlink |
+| `y` / `N` | Confirm/cancel unlink, backup remove, stop-device |
 
 ## How to Add a New Widget
 

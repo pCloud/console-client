@@ -8,13 +8,20 @@ use crate::tui::theme;
 pub fn render(frame: &mut Frame, area: Rect) {
     let shortcuts = [
         ("q", "Quit application"),
-        ("1/2/3", "Switch tabs"),
+        ("1/2/3/4", "Switch tabs"),
         ("Tab", "Switch panel focus (Dashboard)"),
-        ("Up/Down", "Scroll activity log"),
+        ("Up/Down", "Scroll activity log / select backup"),
         ("Ctrl+L", "Crypto (auto: Setup/Unlock/Lock)"),
         ("Ctrl+P", "Sync pause / resume (auto by state)"),
         ("Ctrl+T", "Sync stop / start (auto by state)"),
         ("Ctrl+U", "Unlink account"),
+    ];
+
+    let backup_shortcuts = [
+        ("a", "Add a folder to back up"),
+        ("d", "Remove the selected backup"),
+        ("S", "Stop all backups on this device"),
+        ("r", "Refresh the backups list"),
     ];
 
     let mut lines = vec![
@@ -38,6 +45,19 @@ pub fn render(frame: &mut Frame, area: Rect) {
     ];
 
     for (key, desc) in &shortcuts {
+        lines.push(Line::from(vec![
+            Span::styled(format!("  {:<12}", key), theme::key_hint_style()),
+            Span::styled(*desc, theme::normal_text()),
+        ]));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Backups (tab 2)",
+        theme::title_style(),
+    )));
+    lines.push(Line::from(""));
+    for (key, desc) in &backup_shortcuts {
         lines.push(Line::from(vec![
             Span::styled(format!("  {:<12}", key), theme::key_hint_style()),
             Span::styled(*desc, theme::normal_text()),

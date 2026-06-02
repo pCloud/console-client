@@ -10,7 +10,7 @@ use crate::ffi::types::{
 };
 use crate::security::zeroize_string;
 use crate::utils::qrcode::generate_qr_code;
-use crate::wrapper::{AuthState, CryptoState, PCloudClient, WebLoginConfig};
+use crate::wrapper::{AuthState, BackupId, CryptoState, PCloudClient, WebLoginConfig};
 
 use super::event_types::TuiEvent;
 use super::state::{
@@ -116,6 +116,9 @@ impl App {
             InputMode::PasswordPrompt(_) => self.handle_password_key(key),
             InputMode::HintPrompt => self.handle_hint_key(key),
             InputMode::UnlinkConfirm => self.handle_unlink_confirm_key(key),
+            InputMode::BackupAdd => self.handle_backup_add_key(key),
+            InputMode::BackupRemoveConfirm => self.handle_backup_remove_confirm_key(key),
+            InputMode::BackupStopDeviceConfirm => self.handle_backup_stop_confirm_key(key),
         }
     }
 
@@ -136,11 +139,17 @@ impl App {
                 return;
             }
             KeyCode::Char('2') => {
+                self.state.active_screen = Screen::Backups;
+                self.state.about_focus = None;
+                self.refresh_backups();
+                return;
+            }
+            KeyCode::Char('3') => {
                 self.state.active_screen = Screen::Help;
                 self.state.about_focus = None;
                 return;
             }
-            KeyCode::Char('3') => {
+            KeyCode::Char('4') => {
                 self.state.active_screen = Screen::About;
                 self.state.about_focus = Some(AboutFocus::ClientBuild);
                 return;
@@ -180,6 +189,36 @@ impl App {
                         };
                         let _ = crate::utils::browser::open_url(&url, true);
                     }
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        // Backups screen keys
+        if self.state.active_screen == Screen::Backups {
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') => self.scroll_backup_up(),
+                KeyCode::Down | KeyCode::Char('j') => self.scroll_backup_down(),
+                KeyCode::Char('a') | KeyCode::Char('A') => {
+                    self.state.input_mode = InputMode::BackupAdd;
+                    self.state.input_buffer.clear();
+                }
+                KeyCode::Char('d') | KeyCode::Char('D') | KeyCode::Delete => {
+                    if self.state.selected_backup().is_some() {
+                        self.state.input_mode = InputMode::BackupRemoveConfirm;
+                    } else {
+                        self.state.set_status_message(
+                            "No backup selected".into(),
+                            StatusMessageKind::Error,
+                        );
+                    }
+                }
+                KeyCode::Char('S') => {
+                    self.state.input_mode = InputMode::BackupStopDeviceConfirm;
+                }
+                KeyCode::Char('r') | KeyCode::Char('R') => {
+                    self.refresh_backups();
                 }
                 _ => {}
             }
@@ -249,6 +288,175 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    // ===== Backup operations =====
+
+    fn handle_backup_add_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Enter => {
+                let path = self.state.input_buffer.trim().to_string();
+                self.state.input_buffer.clear();
+                self.state.input_mode = InputMode::Normal;
+                if path.is_empty() {
+                    self.state
+                        .set_status_message("Path is empty".into(), StatusMessageKind::Error);
+                } else {
+                    self.do_backup_add(path);
+                }
+            }
+            KeyCode::Esc => {
+                self.state.input_buffer.clear();
+                self.state.input_mode = InputMode::Normal;
+            }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.state.input_buffer.push(c);
+            }
+            KeyCode::Backspace => {
+                self.state.input_buffer.pop();
+            }
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.state.should_quit = true;
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_backup_remove_confirm_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                let id = self.state.selected_backup().map(|b| b.sync_id);
+                self.state.input_mode = InputMode::Normal;
+                if let Some(id) = id {
+                    self.do_backup_remove(id);
+                }
+            }
+            KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                self.state.input_mode = InputMode::Normal;
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_backup_stop_confirm_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                self.state.input_mode = InputMode::Normal;
+                self.do_backup_stop_device();
+            }
+            KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                self.state.input_mode = InputMode::Normal;
+            }
+            _ => {}
+        }
+    }
+
+    fn do_backup_add(&mut self, path: String) {
+        let result = match self.client.lock() {
+            Ok(guard) => guard.create_backup(std::path::Path::new(&path)),
+            Err(_) => {
+                self.state
+                    .set_status_message("Failed to acquire lock".into(), StatusMessageKind::Error);
+                return;
+            }
+        };
+        match result {
+            Ok(id) => self.state.set_status_message(
+                format!("Backup created (id {})", id),
+                StatusMessageKind::Success,
+            ),
+            // Path-eligibility errors (e.g. inside an existing sync folder) are
+            // raised by the C layer and surfaced here verbatim.
+            Err(e) => self
+                .state
+                .set_status_message(e.to_string(), StatusMessageKind::Error),
+        }
+        self.refresh_backups();
+    }
+
+    fn do_backup_remove(&mut self, sync_id: u32) {
+        let result = match self.client.lock() {
+            Ok(guard) => guard.delete_backup(BackupId(sync_id)),
+            Err(_) => {
+                self.state
+                    .set_status_message("Failed to acquire lock".into(), StatusMessageKind::Error);
+                return;
+            }
+        };
+        match result {
+            Ok(()) => self.state.set_status_message(
+                format!("Backup {} removed", sync_id),
+                StatusMessageKind::Success,
+            ),
+            Err(e) => self
+                .state
+                .set_status_message(e.to_string(), StatusMessageKind::Error),
+        }
+        self.refresh_backups();
+    }
+
+    fn do_backup_stop_device(&mut self) {
+        let result = match self.client.lock() {
+            Ok(guard) => guard.stop_device(None),
+            Err(_) => {
+                self.state
+                    .set_status_message("Failed to acquire lock".into(), StatusMessageKind::Error);
+                return;
+            }
+        };
+        match result {
+            Ok(()) => self
+                .state
+                .set_status_message("Device backups stopped".into(), StatusMessageKind::Success),
+            Err(e) => self
+                .state
+                .set_status_message(e.to_string(), StatusMessageKind::Error),
+        }
+        self.refresh_backups();
+    }
+
+    /// Reload the backups list and device root name from the client.
+    fn refresh_backups(&mut self) {
+        if let Ok(guard) = self.client.lock() {
+            match guard.list_backups() {
+                Ok(list) => {
+                    self.state.backups = list;
+                    self.state.backup_error = None;
+                }
+                Err(e) => {
+                    self.state.backups.clear();
+                    self.state.backup_error = Some(e.to_string());
+                }
+            }
+            self.state.backup_root_name = guard.backup_root_name().ok();
+        }
+        self.state.clamp_backup_selection();
+    }
+
+    fn scroll_backup_up(&mut self) {
+        if self.state.backups.is_empty() {
+            return;
+        }
+        let i = self
+            .state
+            .backup_list_state
+            .selected()
+            .map(|i| i.saturating_sub(1))
+            .unwrap_or(0);
+        self.state.backup_list_state.select(Some(i));
+    }
+
+    fn scroll_backup_down(&mut self) {
+        let len = self.state.backups.len();
+        if len == 0 {
+            return;
+        }
+        let i = match self.state.backup_list_state.selected() {
+            Some(i) if i + 1 < len => i + 1,
+            Some(i) => i,
+            None => 0,
+        };
+        self.state.backup_list_state.select(Some(i));
     }
 
     fn handle_auth_menu_key(&mut self, key: KeyEvent) {
@@ -752,6 +960,12 @@ impl App {
                     StatusMessageKind::Success,
                 );
             }
+        }
+
+        // Keep the backups list current while it is on screen. Done after the
+        // guard above is dropped, since refresh_backups locks the client itself.
+        if self.state.active_screen == Screen::Backups {
+            self.refresh_backups();
         }
     }
 }
