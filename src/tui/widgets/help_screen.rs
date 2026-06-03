@@ -12,6 +12,8 @@ pub fn render(frame: &mut Frame, area: Rect) {
         ("Tab", "Switch panel focus (Dashboard)"),
         ("Up/Down", "Scroll activity log"),
         ("Ctrl+L", "Crypto (auto: Setup/Unlock/Lock)"),
+        ("Ctrl+P", "Sync pause / resume (auto by state)"),
+        ("Ctrl+T", "Sync stop / start (auto by state)"),
         ("Ctrl+U", "Unlink account"),
     ];
 

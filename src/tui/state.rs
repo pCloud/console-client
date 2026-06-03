@@ -3,8 +3,27 @@ use std::time::Instant;
 
 use ratatui::widgets::ListState;
 
-use crate::ffi::types::{pstatus_t, status_to_string, PSTATUS_LOGIN_REQUIRED};
+use crate::ffi::types::{
+    is_error_status, pstatus_t, status_to_string, PSTATUS_LOGIN_REQUIRED, PSTATUS_PAUSED,
+    PSTATUS_STOPPED,
+};
 use crate::wrapper::{AuthState, CryptoState};
+
+/// High-level state of the sync engine, derived from `pstatus_t.status`.
+///
+/// Used by the dashboard key handler and the help bar to decide which of
+/// pause/resume/stop is meaningful at any given moment.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SyncEngineState {
+    /// Sync is actively running (downloading, uploading, scanning, ready, ...).
+    Running,
+    /// `psync_pause()` was called — monitoring continues but transfers are halted.
+    Paused,
+    /// `psync_stop()` was called — no network or local scans until resumed.
+    Stopped,
+    /// Engine is unavailable (login required / error state). Chords are inert.
+    Inactive,
+}
 
 /// Copy of pstatus_t fields that is Clone + Send.
 #[derive(Clone, Debug)]
@@ -251,5 +270,59 @@ impl TuiState {
                 self.status_message_at = None;
             }
         }
+    }
+
+    /// Map the raw `pstatus_t.status` code to the high-level engine state
+    /// that drives the dashboard's pause/resume/stop chords.
+    pub fn sync_engine_state(&self) -> SyncEngineState {
+        match self.status.status {
+            PSTATUS_PAUSED => SyncEngineState::Paused,
+            PSTATUS_STOPPED => SyncEngineState::Stopped,
+            code if is_error_status(code) => SyncEngineState::Inactive,
+            _ => SyncEngineState::Running,
+        }
+    }
+
+    /// Optimistically set the cached status code (and derived label) so the
+    /// dashboard reflects a user-triggered action before the next C-side
+    /// status callback arrives. The next `TuiEvent::StatusUpdate` overwrites
+    /// this with the authoritative value from pclsync.
+    pub fn set_status_code(&mut self, code: u32) {
+        self.status.status = code;
+        self.status.status_str = status_to_string(code).to_string();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ffi::types::{
+        PSTATUS_BAD_LOGIN_DATA, PSTATUS_DOWNLOADINGANDUPLOADING, PSTATUS_READY, PSTATUS_SCANNING,
+    };
+
+    #[test]
+    fn sync_engine_state_maps_known_codes() {
+        let mut state = TuiState::new();
+
+        for (code, expected) in [
+            (PSTATUS_READY, SyncEngineState::Running),
+            (PSTATUS_DOWNLOADINGANDUPLOADING, SyncEngineState::Running),
+            (PSTATUS_SCANNING, SyncEngineState::Running),
+            (PSTATUS_PAUSED, SyncEngineState::Paused),
+            (PSTATUS_STOPPED, SyncEngineState::Stopped),
+            (PSTATUS_LOGIN_REQUIRED, SyncEngineState::Inactive),
+            (PSTATUS_BAD_LOGIN_DATA, SyncEngineState::Inactive),
+        ] {
+            state.set_status_code(code);
+            assert_eq!(state.sync_engine_state(), expected, "code {code}");
+        }
+    }
+
+    #[test]
+    fn set_status_code_updates_label() {
+        let mut state = TuiState::new();
+        state.set_status_code(PSTATUS_PAUSED);
+        assert_eq!(state.status.status, PSTATUS_PAUSED);
+        assert_eq!(state.status.status_str, "Paused");
     }
 }

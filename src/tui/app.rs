@@ -4,14 +4,18 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use secrecy::SecretString;
 
 use crate::ffi::raw;
-use crate::ffi::types::{PSTATUS_BAD_LOGIN_DATA, PSTATUS_BAD_LOGIN_TOKEN, PSTATUS_LOGIN_REQUIRED};
+use crate::ffi::types::{
+    PSTATUS_BAD_LOGIN_DATA, PSTATUS_BAD_LOGIN_TOKEN, PSTATUS_LOGIN_REQUIRED, PSTATUS_PAUSED,
+    PSTATUS_READY, PSTATUS_STOPPED,
+};
 use crate::security::zeroize_string;
 use crate::utils::qrcode::generate_qr_code;
 use crate::wrapper::{AuthState, CryptoState, PCloudClient, WebLoginConfig};
 
 use super::event_types::TuiEvent;
 use super::state::{
-    AboutFocus, ActivityEntry, CryptoAction, InputMode, Screen, StatusMessageKind, TuiState,
+    AboutFocus, ActivityEntry, CryptoAction, InputMode, Screen, StatusMessageKind, SyncEngineState,
+    TuiState,
 };
 
 /// The main TUI application.
@@ -213,6 +217,12 @@ impl App {
             }
             KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.handle_crypto_action();
+            }
+            KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.handle_pause_action();
+            }
+            KeyCode::Char('t') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.handle_stop_action();
             }
             KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.state.input_mode = InputMode::UnlinkConfirm;
@@ -486,6 +496,110 @@ impl App {
                         StatusMessageKind::Error,
                     );
                 }
+            }
+        }
+    }
+
+    // ===== Sync engine operations (pause / resume / stop) =====
+
+    fn handle_pause_action(&mut self) {
+        match self.state.sync_engine_state() {
+            SyncEngineState::Running => self.pause_sync(),
+            SyncEngineState::Paused => self.resume_sync(),
+            SyncEngineState::Stopped => self.state.set_status_message(
+                "Sync is stopped \u{2014} press Ctrl+T to start".into(),
+                StatusMessageKind::Error,
+            ),
+            SyncEngineState::Inactive => self.state.set_status_message(
+                "Sync engine is not available".into(),
+                StatusMessageKind::Error,
+            ),
+        }
+    }
+
+    fn handle_stop_action(&mut self) {
+        match self.state.sync_engine_state() {
+            SyncEngineState::Running | SyncEngineState::Paused => self.stop_sync(),
+            SyncEngineState::Stopped => self.resume_sync(),
+            SyncEngineState::Inactive => self.state.set_status_message(
+                "Sync engine is not available".into(),
+                StatusMessageKind::Error,
+            ),
+        }
+    }
+
+    fn pause_sync(&mut self) {
+        let result = match self.client.lock() {
+            Ok(mut guard) => guard.pause(),
+            Err(_) => {
+                self.state
+                    .set_status_message("Failed to acquire lock".into(), StatusMessageKind::Error);
+                return;
+            }
+        };
+        match result {
+            Ok(()) => {
+                self.state.set_status_code(PSTATUS_PAUSED);
+                self.state
+                    .set_status_message("Sync paused".into(), StatusMessageKind::Success);
+            }
+            Err(e) => {
+                self.state.set_status_message(
+                    format!("Failed to pause: {}", e),
+                    StatusMessageKind::Error,
+                );
+            }
+        }
+    }
+
+    fn resume_sync(&mut self) {
+        let was_stopped = self.state.sync_engine_state() == SyncEngineState::Stopped;
+        let result = match self.client.lock() {
+            Ok(mut guard) => guard.resume(),
+            Err(_) => {
+                self.state
+                    .set_status_message("Failed to acquire lock".into(), StatusMessageKind::Error);
+                return;
+            }
+        };
+        match result {
+            Ok(()) => {
+                self.state.set_status_code(PSTATUS_READY);
+                let msg = if was_stopped {
+                    "Sync started"
+                } else {
+                    "Sync resumed"
+                };
+                self.state
+                    .set_status_message(msg.into(), StatusMessageKind::Success);
+            }
+            Err(e) => {
+                self.state.set_status_message(
+                    format!("Failed to resume: {}", e),
+                    StatusMessageKind::Error,
+                );
+            }
+        }
+    }
+
+    fn stop_sync(&mut self) {
+        let result = match self.client.lock() {
+            Ok(mut guard) => guard.stop(),
+            Err(_) => {
+                self.state
+                    .set_status_message("Failed to acquire lock".into(), StatusMessageKind::Error);
+                return;
+            }
+        };
+        match result {
+            Ok(()) => {
+                self.state.set_status_code(PSTATUS_STOPPED);
+                self.state
+                    .set_status_message("Sync stopped".into(), StatusMessageKind::Success);
+            }
+            Err(e) => {
+                self.state
+                    .set_status_message(format!("Failed to stop: {}", e), StatusMessageKind::Error);
             }
         }
     }

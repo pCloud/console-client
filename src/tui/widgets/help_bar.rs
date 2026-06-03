@@ -3,7 +3,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-use crate::tui::state::{InputMode, Screen, TuiState};
+use crate::tui::state::{InputMode, Screen, SyncEngineState, TuiState};
 use crate::tui::theme;
 
 pub fn render(frame: &mut Frame, state: &TuiState, area: Rect) {
@@ -57,7 +57,7 @@ pub fn render(frame: &mut Frame, state: &TuiState, area: Rect) {
         }
         InputMode::Normal => match state.active_screen {
             Screen::Dashboard => {
-                vec![
+                let mut spans = vec![
                     Span::styled(" q ", theme::key_hint_style()),
                     Span::styled("Quit  ", theme::key_desc_style()),
                     Span::styled("1/2/3 ", theme::key_hint_style()),
@@ -68,9 +68,39 @@ pub fn render(frame: &mut Frame, state: &TuiState, area: Rect) {
                     Span::styled("Scroll  ", theme::key_desc_style()),
                     Span::styled("Ctrl+L ", theme::key_hint_style()),
                     Span::styled("Crypto  ", theme::key_desc_style()),
+                ];
+
+                match state.sync_engine_state() {
+                    SyncEngineState::Running => {
+                        spans.extend([
+                            Span::styled("Ctrl+P ", theme::key_hint_style()),
+                            Span::styled("Pause  ", theme::key_desc_style()),
+                            Span::styled("Ctrl+T ", theme::key_hint_style()),
+                            Span::styled("Stop  ", theme::key_desc_style()),
+                        ]);
+                    }
+                    SyncEngineState::Paused => {
+                        spans.extend([
+                            Span::styled("Ctrl+P ", theme::key_hint_style()),
+                            Span::styled("Resume  ", theme::key_desc_style()),
+                            Span::styled("Ctrl+T ", theme::key_hint_style()),
+                            Span::styled("Stop  ", theme::key_desc_style()),
+                        ]);
+                    }
+                    SyncEngineState::Stopped => {
+                        spans.extend([
+                            Span::styled("Ctrl+T ", theme::key_hint_style()),
+                            Span::styled("Start  ", theme::key_desc_style()),
+                        ]);
+                    }
+                    SyncEngineState::Inactive => {}
+                }
+
+                spans.extend([
                     Span::styled("Ctrl+U ", theme::key_hint_style()),
                     Span::styled("Unlink", theme::key_desc_style()),
-                ]
+                ]);
+                spans
             }
             Screen::Help => {
                 vec![
