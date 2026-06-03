@@ -36,7 +36,9 @@ pub fn render(frame: &mut Frame, state: &TuiState, area: Rect) {
         }
         InputMode::AuthWebWaiting(_) => {
             vec![
-                Span::styled(" Esc ", theme::key_hint_style()),
+                Span::styled(" o ", theme::key_hint_style()),
+                Span::styled("Open in browser  ", theme::key_desc_style()),
+                Span::styled("Esc ", theme::key_hint_style()),
                 Span::styled("Cancel  ", theme::key_desc_style()),
                 Span::styled("↑↓ ", theme::key_hint_style()),
                 Span::styled("Scroll  ", theme::key_desc_style()),

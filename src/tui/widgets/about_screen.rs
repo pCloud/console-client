@@ -27,20 +27,19 @@ pub fn render(frame: &mut Frame, state: &TuiState, area: Rect) {
         )),
         Line::from(""),
         Line::from(vec![
-            Span::styled("  Console Client    ", theme::muted_text()),
+            Span::styled("  Version           ", theme::muted_text()),
             Span::styled(format!("v{}", version), theme::normal_text()),
         ]),
         Line::from(vec![
             Span::styled("  Build             ", theme::muted_text()),
             Span::styled(client_commit, client_build_style),
         ]),
-        Line::from(""),
         Line::from(vec![
-            Span::styled("  pclsync Library   ", theme::muted_text()),
+            Span::styled("  Library version   ", theme::muted_text()),
             Span::styled(format!("v{}", pclsync_ver), theme::normal_text()),
         ]),
         Line::from(vec![
-            Span::styled("  Build             ", theme::muted_text()),
+            Span::styled("  Library build     ", theme::muted_text()),
             Span::styled(pclsync_commit, pclsync_build_style),
         ]),
         Line::from(""),
@@ -57,7 +56,7 @@ pub fn render(frame: &mut Frame, state: &TuiState, area: Rect) {
         ]),
         Line::from(vec![
             Span::styled("  License           ", theme::muted_text()),
-            Span::styled("BSD-3-Clause, details ", theme::normal_text()),
+            Span::styled("BSD-3-Clause, see ", theme::normal_text()),
             Span::styled("here", license_link_style),
         ]),
     ];

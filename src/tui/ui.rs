@@ -62,9 +62,9 @@ fn render_dashboard(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rec
     let state = &mut app.state;
 
     let chunks = Layout::vertical([
-        Constraint::Length(5), // Header (3 content lines + 2 borders)
+        Constraint::Length(7), // Header (5 content lines + 2 borders)
         Constraint::Length(3), // Crypto
-        Constraint::Length(4), // Transfers
+        Constraint::Length(6), // Transfers (2 label lines + 2 gauge bars + borders)
         Constraint::Fill(1),   // Activity log
     ])
     .split(area);

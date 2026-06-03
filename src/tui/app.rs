@@ -298,6 +298,21 @@ impl App {
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.state.should_quit = true;
             }
+            KeyCode::Char('o') | KeyCode::Char('O') => {
+                if let InputMode::AuthWebWaiting(url) = &self.state.input_mode {
+                    let url = url.clone();
+                    match crate::utils::browser::open_url(&url, true) {
+                        Ok(true) => self.state.set_status_message(
+                            "Opened login URL in browser".into(),
+                            StatusMessageKind::Success,
+                        ),
+                        Ok(false) | Err(_) => self.state.set_status_message(
+                            "Could not open a browser. Copy the URL or scan the QR code.".into(),
+                            StatusMessageKind::Error,
+                        ),
+                    }
+                }
+            }
             KeyCode::Up | KeyCode::Char('k') => {
                 self.state.scroll_offset = self.state.scroll_offset.saturating_sub(1);
             }
@@ -630,14 +645,14 @@ impl App {
 /// Get account location label from the C library settings DB.
 fn get_location() -> Option<String> {
     let loc_id = unsafe {
-        let key = std::ffi::CString::new("locationid").unwrap();
+        let key = std::ffi::CString::new("location_id").unwrap();
         raw::psync_get_uint_value(key.as_ptr())
     };
     match loc_id {
         0 => None,
-        1 => Some("US".to_string()),
-        2 => Some("EU".to_string()),
-        other => Some(format!("Region {}", other)),
+        1 => Some("\u{1F30E} US".to_string()),
+        2 => Some("\u{1F30D} EU".to_string()),
+        other => Some(format!("\u{1F310} Region {}", other)),
     }
 }
 

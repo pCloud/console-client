@@ -28,7 +28,6 @@ pub fn status_error() -> Style {
     Style::default().fg(ERROR).add_modifier(Modifier::BOLD)
 }
 
-#[allow(dead_code)]
 pub fn status_warning() -> Style {
     Style::default().fg(WARNING)
 }

@@ -406,6 +406,55 @@ pub fn status_to_string(status: u32) -> &'static str {
     }
 }
 
+/// Leading icon to show next to a sync status label.
+pub fn status_icon(status: u32) -> &'static str {
+    match status {
+        PSTATUS_READY => "\u{2705}",
+        PSTATUS_DOWNLOADING | PSTATUS_UPLOADING | PSTATUS_DOWNLOADINGANDUPLOADING => "\u{1F504}",
+        PSTATUS_LOGIN_REQUIRED
+        | PSTATUS_BAD_LOGIN_DATA
+        | PSTATUS_BAD_LOGIN_TOKEN
+        | PSTATUS_ACCOUNT_FULL
+        | PSTATUS_DISK_FULL
+        | PSTATUS_USER_MISMATCH => "\u{26A0}\u{FE0F}",
+        PSTATUS_PAUSED => "\u{23F8}\u{FE0F}",
+        PSTATUS_STOPPED => "\u{1F6D1}",
+        PSTATUS_OFFLINE => "\u{1F996}",
+        PSTATUS_CONNECTING => "\u{23F3}",
+        PSTATUS_SCANNING => "\u{1F50D}",
+        _ => "\u{2753}",
+    }
+}
+
+/// Coarse-grained status category used to pick a row style.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatusKind {
+    Ready,
+    InProgress,
+    NeedsAction,
+    Idle,
+}
+
+/// Map a sync status to its display category.
+pub fn status_kind(status: u32) -> StatusKind {
+    match status {
+        PSTATUS_READY => StatusKind::Ready,
+        PSTATUS_DOWNLOADING
+        | PSTATUS_UPLOADING
+        | PSTATUS_DOWNLOADINGANDUPLOADING
+        | PSTATUS_CONNECTING
+        | PSTATUS_SCANNING => StatusKind::InProgress,
+        PSTATUS_LOGIN_REQUIRED
+        | PSTATUS_BAD_LOGIN_DATA
+        | PSTATUS_BAD_LOGIN_TOKEN
+        | PSTATUS_ACCOUNT_FULL
+        | PSTATUS_DISK_FULL
+        | PSTATUS_USER_MISMATCH
+        | PSTATUS_PAUSED => StatusKind::NeedsAction,
+        _ => StatusKind::Idle,
+    }
+}
+
 /// Check if a status indicates the client is actively syncing.
 pub fn is_syncing(status: u32) -> bool {
     matches!(
@@ -466,6 +515,54 @@ mod tests {
         assert!(is_error_status(PSTATUS_ACCOUNT_FULL));
         assert!(!is_error_status(PSTATUS_READY));
         assert!(!is_error_status(PSTATUS_DOWNLOADING));
+    }
+
+    #[test]
+    fn test_status_icon() {
+        assert_eq!(status_icon(PSTATUS_READY), "\u{2705}");
+        assert_eq!(status_icon(PSTATUS_DOWNLOADING), "\u{1F504}");
+        assert_eq!(status_icon(PSTATUS_UPLOADING), "\u{1F504}");
+        assert_eq!(status_icon(PSTATUS_DOWNLOADINGANDUPLOADING), "\u{1F504}");
+        assert_eq!(status_icon(PSTATUS_LOGIN_REQUIRED), "\u{26A0}\u{FE0F}");
+        assert_eq!(status_icon(PSTATUS_BAD_LOGIN_DATA), "\u{26A0}\u{FE0F}");
+        assert_eq!(status_icon(PSTATUS_BAD_LOGIN_TOKEN), "\u{26A0}\u{FE0F}");
+        assert_eq!(status_icon(PSTATUS_ACCOUNT_FULL), "\u{26A0}\u{FE0F}");
+        assert_eq!(status_icon(PSTATUS_DISK_FULL), "\u{26A0}\u{FE0F}");
+        assert_eq!(status_icon(PSTATUS_USER_MISMATCH), "\u{26A0}\u{FE0F}");
+        assert_eq!(status_icon(PSTATUS_PAUSED), "\u{23F8}\u{FE0F}");
+        assert_eq!(status_icon(PSTATUS_STOPPED), "\u{1F6D1}");
+        assert_eq!(status_icon(PSTATUS_OFFLINE), "\u{1F996}");
+        assert_eq!(status_icon(PSTATUS_CONNECTING), "\u{23F3}");
+        assert_eq!(status_icon(PSTATUS_SCANNING), "\u{1F50D}");
+        assert_eq!(status_icon(999), "\u{2753}");
+    }
+
+    #[test]
+    fn test_status_kind() {
+        assert_eq!(status_kind(PSTATUS_READY), StatusKind::Ready);
+        for s in [
+            PSTATUS_DOWNLOADING,
+            PSTATUS_UPLOADING,
+            PSTATUS_DOWNLOADINGANDUPLOADING,
+            PSTATUS_CONNECTING,
+            PSTATUS_SCANNING,
+        ] {
+            assert_eq!(status_kind(s), StatusKind::InProgress, "code {s}");
+        }
+        for s in [
+            PSTATUS_LOGIN_REQUIRED,
+            PSTATUS_BAD_LOGIN_DATA,
+            PSTATUS_BAD_LOGIN_TOKEN,
+            PSTATUS_ACCOUNT_FULL,
+            PSTATUS_DISK_FULL,
+            PSTATUS_USER_MISMATCH,
+            PSTATUS_PAUSED,
+        ] {
+            assert_eq!(status_kind(s), StatusKind::NeedsAction, "code {s}");
+        }
+        assert_eq!(status_kind(PSTATUS_STOPPED), StatusKind::Idle);
+        assert_eq!(status_kind(PSTATUS_OFFLINE), StatusKind::Idle);
+        assert_eq!(status_kind(999), StatusKind::Idle);
     }
 
     #[test]

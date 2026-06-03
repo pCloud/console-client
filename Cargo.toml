@@ -34,6 +34,7 @@ libc = "0.2"
 ctrlc = "3.4"
 qrcode = "0.14"
 ratatui = "0.29"
+unicode-width = "0.2"
 dirs = "5.0"
 bugsnag = { version = "0.2", optional = true }
 obfstr = { version = "0.4", optional = true }

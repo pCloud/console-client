@@ -3,27 +3,24 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
-use crate::ffi::types::{is_error_status, is_syncing, PSTATUS_READY};
+use crate::ffi::types::{status_icon, status_kind, StatusKind};
 use crate::tui::state::TuiState;
 use crate::tui::theme;
+use crate::tui::widgets::util;
+
+// Width of the widest label ("Data region: ") used to left-align values.
+const LABEL_WIDTH: usize = 13;
 
 pub fn render(frame: &mut Frame, state: &TuiState, area: Rect) {
-    let status_style = if state.status.status == PSTATUS_READY {
-        theme::status_ready()
-    } else if is_error_status(state.status.status) {
-        theme::status_error()
-    } else if is_syncing(state.status.status) {
-        theme::status_syncing()
-    } else {
-        theme::normal_text()
+    let status_style = match status_kind(state.status.status) {
+        StatusKind::Ready => theme::status_ready(),
+        StatusKind::InProgress => theme::status_syncing(),
+        StatusKind::NeedsAction => theme::status_warning(),
+        StatusKind::Idle => theme::normal_text(),
     };
 
     let email_str = state.account_email.as_deref().unwrap_or("--");
-    let location_suffix = state
-        .account_location
-        .as_ref()
-        .map(|loc| format!(" ({})", loc))
-        .unwrap_or_default();
+    let region_str = state.account_location.as_deref().unwrap_or("--");
     let storage_str = if state.quota_total > 0 {
         let pct = (state.quota_used as f64 / state.quota_total as f64 * 100.0) as u64;
         format!(
@@ -36,7 +33,6 @@ pub fn render(frame: &mut Frame, state: &TuiState, area: Rect) {
         "--".to_string()
     };
 
-    // Status message line (if any)
     let status_msg_span = if let Some((ref msg, ref kind)) = state.status_message {
         let style = match kind {
             crate::tui::state::StatusMessageKind::Success => theme::success_text(),
@@ -47,54 +43,74 @@ pub fn render(frame: &mut Frame, state: &TuiState, area: Rect) {
         Span::raw("")
     };
 
-    let line1 = Line::from(vec![
-        Span::styled("  Status: ", theme::muted_text()),
+    let status_line = Line::from(vec![
+        label_span("Status:"),
+        Span::styled(status_icon(state.status.status), status_style),
+        Span::raw(" "),
         Span::styled(&state.status.status_str, status_style),
-        Span::raw("          "),
-        Span::styled("Account: ", theme::muted_text()),
-        Span::styled(
-            format!("{}{}", email_str, location_suffix),
-            theme::normal_text(),
-        ),
         status_msg_span,
     ]);
 
-    let line2 = Line::from(vec![
-        Span::raw("                          "),
-        Span::styled("Storage: ", theme::muted_text()),
+    let account_line = Line::from(vec![
+        label_span("Account:"),
+        Span::styled("\u{1F464}", theme::normal_text()),
+        Span::raw(" "),
+        Span::styled(email_str, theme::normal_text()),
+    ]);
+
+    let region_line = Line::from(vec![
+        label_span("Data region:"),
+        Span::styled(region_str, theme::normal_text()),
+    ]);
+
+    let storage_line = Line::from(vec![
+        label_span("Storage:"),
+        Span::styled("\u{1F4BE}", theme::normal_text()),
+        Span::raw(" "),
         Span::styled(storage_str, theme::normal_text()),
     ]);
 
     let (mount_icon, mount_icon_style, mount_text) = if state.fs_mounted {
         let mp = state.mountpoint.as_deref().unwrap_or("unknown");
-        ("V", theme::success_text(), format!("Mounted at {}", mp))
+        (
+            "\u{2705}",
+            theme::success_text(),
+            format!("Mounted at {}", mp),
+        )
     } else {
-        ("X", theme::error_text(), "Not mounted".to_string())
+        (
+            "\u{2298}",
+            theme::status_warning(),
+            "Not mounted".to_string(),
+        )
     };
 
-    let line3 = Line::from(vec![
-        Span::styled("  Mount:  ", theme::muted_text()),
+    let mount_line = Line::from(vec![
+        label_span("Mount:"),
         Span::styled(mount_icon, mount_icon_style),
         Span::raw(" "),
         Span::styled(mount_text, theme::normal_text()),
     ]);
 
-    let version = env!("CARGO_PKG_VERSION");
     let block = Block::default()
         .borders(Borders::ALL)
         .title(Span::styled(" pCloud ", theme::title_style()))
         .title_alignment(Alignment::Left)
-        .border_style(theme::focused_border())
-        .title_bottom(
-            Line::from(vec![Span::styled(
-                format!(" v{} ", version),
-                theme::muted_text(),
-            )])
-            .alignment(Alignment::Right),
-        );
+        .border_style(theme::focused_border());
 
-    let paragraph = Paragraph::new(vec![line1, line2, line3]).block(block);
+    let paragraph = Paragraph::new(vec![
+        status_line,
+        account_line,
+        region_line,
+        storage_line,
+        mount_line,
+    ])
+    .block(block);
     frame.render_widget(paragraph, area);
+}
+
+fn label_span(label: &str) -> Span<'static> {
+    util::label_span(label, LABEL_WIDTH)
 }
 
 /// Format bytes into human-readable form.
