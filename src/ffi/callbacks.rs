@@ -749,6 +749,7 @@ pub mod overlay {
 
         #[test]
         fn test_overlay_callback_registration_and_invocation() {
+            let _guard = super::super::callback_test_guard();
             let called = Arc::new(AtomicBool::new(false));
             let called_clone = Arc::clone(&called);
 
@@ -766,6 +767,7 @@ pub mod overlay {
 
         #[test]
         fn test_overlay_config_builder() {
+            let _guard = super::super::callback_test_guard();
             let start_called = Arc::new(AtomicBool::new(false));
             let stop_called = Arc::new(AtomicBool::new(false));
 
@@ -793,6 +795,25 @@ pub mod overlay {
     }
 }
 
+/// Serializes the unit tests that register/clear the process-global callback
+/// statics. Those statics are shared across the whole process, so without this
+/// the tests race and clobber each other's registrations under parallel
+/// `cargo test`. Poison-tolerant, since one test deliberately panics inside a
+/// callback to exercise panic safety.
+#[cfg(test)]
+static CALLBACK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Acquire [`CALLBACK_TEST_LOCK`], recovering from a poisoned mutex.
+///
+/// `pub(crate)` so other in-crate test modules that touch the same global
+/// callback statics (e.g. `lib.rs`) can serialize against these tests too.
+#[cfg(test)]
+pub(crate) fn callback_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    CALLBACK_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -805,6 +826,7 @@ mod tests {
 
     #[test]
     fn test_status_callback_registration() {
+        let _guard = super::callback_test_guard();
         let called = Arc::new(AtomicBool::new(false));
         let called_clone = Arc::clone(&called);
 
@@ -830,6 +852,7 @@ mod tests {
 
     #[test]
     fn test_event_callback_registration() {
+        let _guard = super::callback_test_guard();
         let called = Arc::new(AtomicBool::new(false));
         let called_clone = Arc::clone(&called);
 
@@ -855,6 +878,7 @@ mod tests {
 
     #[test]
     fn test_notification_callback_registration() {
+        let _guard = super::callback_test_guard();
         let count = Arc::new(AtomicU32::new(0));
         let count_clone = Arc::clone(&count);
 
@@ -874,6 +898,7 @@ mod tests {
 
     #[test]
     fn test_clear_all_callbacks() {
+        let _guard = super::callback_test_guard();
         // Register all callbacks
         register_status_callback(|_| {});
         register_event_callback(|_, _| {});
@@ -898,6 +923,7 @@ mod tests {
 
     #[test]
     fn test_callback_config_builder() {
+        let _guard = super::callback_test_guard();
         let status_called = Arc::new(AtomicBool::new(false));
         let event_called = Arc::new(AtomicBool::new(false));
 
@@ -924,6 +950,7 @@ mod tests {
 
     #[test]
     fn test_status_trampoline_null_pointer() {
+        let _guard = super::callback_test_guard();
         // Should not panic when called with null
         unsafe {
             status_callback_trampoline(std::ptr::null_mut());
@@ -932,6 +959,7 @@ mod tests {
 
     #[test]
     fn test_status_trampoline_invokes_callback() {
+        let _guard = super::callback_test_guard();
         let called = Arc::new(AtomicBool::new(false));
         let called_clone = Arc::clone(&called);
 
@@ -957,6 +985,7 @@ mod tests {
 
     #[test]
     fn test_callback_panic_safety() {
+        let _guard = super::callback_test_guard();
         // Register a callback that panics
         register_status_callback(|_| {
             panic!("This panic should be caught!");

@@ -101,6 +101,7 @@ mod tests {
 
     #[test]
     fn test_callback_registration_functions() {
+        let _guard = ffi::callbacks::callback_test_guard();
         // Verify callback registration functions are accessible
         use ffi::{
             clear_all_callbacks, clear_event_callback, clear_status_callback,
@@ -135,6 +136,7 @@ mod tests {
 
     #[test]
     fn test_overlay_callbacks_accessible() {
+        let _guard = ffi::callbacks::callback_test_guard();
         // Verify overlay callbacks are accessible
         use ffi::callbacks::overlay::{
             clear_all_overlay_callbacks, invoke_crypto_start_callback, invoke_crypto_stop_callback,
