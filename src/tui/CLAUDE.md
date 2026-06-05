@@ -30,10 +30,9 @@ When asking Claude for help, use the `context7` MCP tool with library ID `ratatu
 
 ```
 src/tui/
-|-- mod.rs              # Entry point: run(), callback registration, event loop
-|-- app.rs              # App struct: key handling, crypto/auth operations, tick()
-|-- state.rs            # TuiState, StatusSnapshot, enums (Screen, Panel, InputMode)
-|-- event_types.rs      # TuiEvent enum (channel messages)
+|-- mod.rs              # Entry point: run(daemon, cli), terminal + event loop
+|-- app.rs              # App struct: key handling, IPC actions, tick()/poll_*()
+|-- state.rs            # TuiState, enums (Screen, Panel, InputMode)
 |-- theme.rs            # Color constants and Style factory functions
 |-- ui.rs               # Top-level render dispatch (screen routing, overlays)
 +-- widgets/            # One file per visual component
@@ -57,12 +56,20 @@ src/tui/
 
 ### Data Flow
 
+The TUI is a **pure IPC client** of the daemon. It owns no pclsync engine and
+registers no C callbacks. All state is fetched from, and all actions are sent
+to, the daemon over the Unix socket via `DaemonClient`.
+
 ```
-C library callbacks ──(mpsc channel)──> mod.rs event loop ──> App.handle_event()
+1-second tick ──> App.tick() ──> poll_status()   (DaemonCommand::StatusFull)
+                                  poll_activity() (DaemonCommand::ActivitySince { cursor })
                                                 |
 Crossterm key events ─────────────────> App.handle_key()
-                                                |
-1-second timer ───────────────────────> App.tick()  (polls PCloudClient state)
+                                                |  (actions send IPC commands:
+                                                |   Pause/Stop/Resume/StartCrypto/
+                                                |   SetupCrypto/AuthBeginWeb/SetAuthToken;
+                                                |   each follows up with an immediate
+                                                |   poll_status() refresh)
                                                 |
                                           TuiState (mutated)
                                                 |
@@ -74,13 +81,24 @@ Crossterm key events ─────────────────> App.ha
                                        transfer, activity_log)   unlink_confirm)
 ```
 
+`App.send()` wraps every `DaemonClient::send_command(...)`. On an IPC failure it
+sets `state.daemon_unavailable = true` (surfacing a "Daemon unavailable — press
+Ctrl+R to restart" message) and returns `None` so callers degrade gracefully.
+Connectivity is re-established automatically on the next successful command.
+`activity_cursor` tracks the highest activity sequence id already pulled so
+`ActivitySince` only returns new entries.
+
 ### Threading Model
 
-- **Main thread**: Owns the terminal, runs the event loop, renders UI.
-- **C library threads**: Fire callbacks (status, event, fs_start) from internal pclsync threads. These callbacks send `TuiEvent` messages over an `mpsc::channel`. The main loop drains the channel with `try_recv()`.
-- **Web auth thread**: A `std::thread::spawn` waits for browser-based login to complete. Auth success is detected via `tick()` polling, not via the channel.
-
-All `PCloudClient` access goes through `Arc<Mutex<PCloudClient>>`. Keep lock scopes minimal to avoid blocking callbacks.
+- **Main thread**: Owns the terminal, runs the event loop, renders UI, and
+  performs all IPC round-trips (`StatusFull` / `ActivitySince` on each tick,
+  action commands on key presses). There are no other threads in the TUI.
+- **No C callbacks**: The TUI does not register status/event/fs callbacks and
+  has no `mpsc` channel. The live event stream lives in the daemon, which feeds
+  a bounded `ActivityLog` ring buffer that the TUI polls via `ActivitySince`.
+- **Web auth**: Started by sending `DaemonCommand::AuthBeginWeb`; the daemon
+  runs the browser-login wait on its own thread. The TUI displays the returned
+  URL/QR (`DaemonResponse::AuthWeb`) and detects success by polling `StatusFull`.
 
 ## State Machine
 
@@ -133,7 +151,10 @@ The `tab_bar` widget renders the tab selector. The `help_bar` widget adapts its 
 | `Home` / `g` | Jump to log top |
 | `End` / `G` | Jump to log bottom |
 | `Ctrl+L` | Crypto action (auto-selects Setup/Unlock/Lock) |
+| `Ctrl+P` | Pause / resume sync transfers |
+| `Ctrl+T` | Stop / resume sync |
 | `Ctrl+U` | Unlink account (shows confirmation) |
+| `Ctrl+R` | Restart daemon (when daemon is unavailable) |
 
 ### Auth screens
 | Key | Action |
@@ -257,20 +278,39 @@ Currently applied when:
 - Password display uses `"*".repeat(len)` masking in `password_input.rs`.
 - Never log, print, or store raw password strings beyond their immediate use scope.
 
-## C Library Integration
+## Daemon (IPC) Integration
 
-The TUI interacts with the pclsync C library through:
+The TUI does **not** touch the pclsync C library directly. It owns no engine,
+registers no callbacks, and makes no FFI calls. All interaction goes through the
+daemon over the Unix socket via `DaemonClient::send_command(...)`.
 
-1. **Callbacks** (registered in `mod.rs`):
-   - `register_status_callback` -- sync status changes (fires from C thread)
-   - `register_event_callback` -- file download/upload/delete events (fires from C thread)
-   - `register_fs_start_callback` -- filesystem mounted notification
+1. **State polling** (`App.tick()`, once per second):
+   - `DaemonCommand::StatusFull` -> `DaemonResponse::StatusFull(Box<DashboardSnapshot>)`.
+     `apply_snapshot()` copies status, auth/crypto state, mount state, account
+     email/quota/location, and crypto folder path into `TuiState`, and drives
+     auth-screen transitions when the engine's login state changes.
+   - `DaemonCommand::ActivitySince { cursor }` -> `DaemonResponse::Activity { entries, cursor }`.
+     New `ActivityEntry` items (each carries a `seq`) are appended to the log and
+     `activity_cursor` advances.
 
-2. **Direct FFI** (in `app.rs`):
-   - `raw::psync_get_uint_value` -- reads quota values from the C library's settings DB
-   - `PCloudClient` methods via the wrapper layer (auth, crypto, mount state)
+2. **Actions** (from `app.rs` key handlers): `Pause`, `Stop`, `Resume`,
+   `StartCrypto`, `SetupCrypto`, `AuthBeginWeb`, `SetAuthToken`, plus the backup
+   commands. Each action issues an immediate `poll_status()` so the dashboard
+   reflects the result without waiting for the next tick.
 
-3. **Trampoline pattern**: C callbacks invoke `extern "C"` trampoline functions which retrieve stored Rust closures from global `Mutex` storage. The closures send `TuiEvent` messages over the mpsc channel. This decouples C threads from the main render thread.
+3. **Daemon-side ownership**: The daemon registers the real status/event
+   callbacks, runs `psync_get_status` on demand, and maintains the `ActivityLog`
+   ring buffer. The shared snapshot types (`DashboardSnapshot`, `StatusSnapshot`,
+   `SyncEngineState`, `ActivityEntry`) live in `src/wrapper/status.rs` and are
+   serialized over the bincode IPC protocol.
+
+### Daemon-unavailable handling
+
+When an IPC command fails, `App.send()` flags `state.daemon_unavailable`. The
+dashboard then shows a "Daemon unavailable — press Ctrl+R to restart" message.
+`Ctrl+R` (`restart_daemon()`) calls
+`daemon::process::spawn_background_daemon(/* allow_unauthenticated = */ true)`
+to bring a fresh daemon back up; the next successful poll clears the flag.
 
 ## Terminal Lifecycle
 

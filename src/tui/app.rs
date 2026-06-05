@@ -1,34 +1,36 @@
-use std::sync::{Arc, Mutex};
-
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use secrecy::SecretString;
+use secrecy::{ExposeSecret, SecretString};
 
-use crate::ffi::raw;
+use crate::daemon::{DaemonClient, DaemonCommand, DaemonResponse};
 use crate::ffi::types::{
     PSTATUS_BAD_LOGIN_DATA, PSTATUS_BAD_LOGIN_TOKEN, PSTATUS_LOGIN_REQUIRED, PSTATUS_PAUSED,
     PSTATUS_READY, PSTATUS_STOPPED,
 };
 use crate::security::zeroize_string;
-use crate::utils::qrcode::generate_qr_code;
-use crate::wrapper::{AuthState, BackupId, CryptoState, PCloudClient, WebLoginConfig};
+use crate::wrapper::{CryptoState, DashboardSnapshot};
 
-use super::event_types::TuiEvent;
 use super::state::{
-    AboutFocus, ActivityEntry, CryptoAction, InputMode, Screen, StatusMessageKind, SyncEngineState,
-    TuiState,
+    AboutFocus, CryptoAction, InputMode, Screen, StatusMessageKind, SyncEngineState, TuiState,
 };
 
 /// The main TUI application.
+///
+/// The TUI is a pure IPC client: it owns no pclsync engine. All state is
+/// fetched from, and all actions are sent to, the daemon over the Unix socket
+/// via [`DaemonClient`].
 pub struct App {
     pub state: TuiState,
-    client: Arc<Mutex<PCloudClient>>,
+    daemon: DaemonClient,
+    /// Highest activity-log sequence id already pulled from the daemon.
+    activity_cursor: u64,
 }
 
 impl App {
-    pub fn new(client: Arc<Mutex<PCloudClient>>) -> Self {
+    pub fn new(daemon: DaemonClient) -> Self {
         Self {
             state: TuiState::new(),
-            client,
+            daemon,
+            activity_cursor: 0,
         }
     }
 
@@ -36,73 +38,78 @@ impl App {
         self.state.should_quit
     }
 
-    /// Handle a TUI event from the channel.
-    pub fn handle_event(&mut self, event: TuiEvent) {
-        match event {
-            TuiEvent::StatusUpdate(snapshot) => {
-                // Check if we need to show auth screen
-                let needs_auth = matches!(
-                    snapshot.status,
-                    PSTATUS_LOGIN_REQUIRED | PSTATUS_BAD_LOGIN_DATA | PSTATUS_BAD_LOGIN_TOKEN
-                );
+    /// Send a command to the daemon, tracking connectivity.
+    ///
+    /// Returns `None` (and flags the daemon as unavailable) on an IPC failure,
+    /// so callers degrade gracefully instead of panicking. Connectivity is
+    /// re-established automatically on the next successful command.
+    fn send(&mut self, command: DaemonCommand) -> Option<DaemonResponse> {
+        match self.daemon.send_command(command) {
+            Ok(resp) => {
+                self.state.daemon_unavailable = false;
+                Some(resp)
+            }
+            Err(_) => {
+                self.state.daemon_unavailable = true;
+                None
+            }
+        }
+    }
 
-                self.state.status = snapshot;
+    /// Send a fire-and-report action whose response is `Ok` / `OkWithMessage` /
+    /// `Error`, surfacing the outcome as a transient status message.
+    fn run_action(&mut self, command: DaemonCommand, success_default: &str) {
+        match self.send(command) {
+            Some(DaemonResponse::Ok) => self
+                .state
+                .set_status_message(success_default.into(), StatusMessageKind::Success),
+            Some(DaemonResponse::OkWithMessage(msg)) => self
+                .state
+                .set_status_message(msg, StatusMessageKind::Success),
+            Some(DaemonResponse::Error(e)) => {
+                self.state.set_status_message(e, StatusMessageKind::Error)
+            }
+            Some(_) => self.state.set_status_message(
+                "Unexpected daemon response".into(),
+                StatusMessageKind::Error,
+            ),
+            None => {}
+        }
+    }
 
-                if needs_auth && self.state.input_mode == InputMode::Normal {
-                    self.state.auth_state = AuthState::NotAuthenticated;
-                    self.state.input_mode = InputMode::AuthMenu;
-                } else if !needs_auth {
-                    if self.state.auth_state != AuthState::Authenticated {
-                        self.state.auth_state = AuthState::Authenticated;
-                    }
-                    // If we were in auth mode, switch to normal
-                    if matches!(
-                        self.state.input_mode,
-                        InputMode::AuthMenu | InputMode::AuthToken | InputMode::AuthWebWaiting(_)
-                    ) {
-                        self.state.needs_clear = true;
-                        self.state.input_mode = InputMode::Normal;
-                    }
-                }
-            }
-            TuiEvent::FileEvent {
-                description,
-                is_error,
-            } => {
-                let now = chrono_time();
-                self.state.push_activity(ActivityEntry {
-                    timestamp: now,
-                    description,
-                    is_error,
-                });
-            }
-            TuiEvent::FsMounted => {
-                self.state.fs_mounted = true;
-            }
-            TuiEvent::WebAuthResult(result) => match result {
-                Ok(()) => {
-                    self.state.auth_state = AuthState::Authenticated;
-                    self.state.input_mode = InputMode::Normal;
-                    self.state.set_status_message(
-                        "Authentication successful!".into(),
-                        StatusMessageKind::Success,
-                    );
-                }
-                Err(e) => {
-                    self.state.input_mode = InputMode::AuthMenu;
-                    self.state.set_status_message(
-                        format!("Auth failed: {}", e),
-                        StatusMessageKind::Error,
-                    );
-                }
-            },
-            TuiEvent::Tick => {
-                self.tick();
-            }
-            TuiEvent::Quit => {
-                self.state.should_quit = true;
-            }
-            TuiEvent::Key(_) => {} // handled separately
+    /// Apply a dashboard snapshot fetched from the daemon to the view state,
+    /// driving auth-screen transitions as the engine's login state changes.
+    fn apply_snapshot(&mut self, snap: DashboardSnapshot) {
+        let needs_auth = matches!(
+            snap.status.status,
+            PSTATUS_LOGIN_REQUIRED | PSTATUS_BAD_LOGIN_DATA | PSTATUS_BAD_LOGIN_TOKEN
+        );
+
+        self.state.status = snap.status;
+        self.state.auth_state = snap.auth_state;
+        self.state.crypto_state = snap.crypto_state;
+        self.state.fs_mounted = snap.fs_mounted;
+        self.state.mountpoint = snap.mountpoint;
+        self.state.account_email = snap.account_email;
+        self.state.quota_used = snap.quota_used;
+        self.state.quota_total = snap.quota_total;
+        self.state.account_location = snap.account_location;
+        self.state.crypto_folder_path = snap.crypto_folder_path;
+
+        if needs_auth && self.state.input_mode == InputMode::Normal {
+            self.state.input_mode = InputMode::AuthMenu;
+        } else if !needs_auth
+            && matches!(
+                self.state.input_mode,
+                InputMode::AuthMenu | InputMode::AuthToken | InputMode::AuthWebWaiting(_)
+            )
+        {
+            self.state.needs_clear = true;
+            self.state.input_mode = InputMode::Normal;
+            self.state.set_status_message(
+                "Authentication successful!".into(),
+                StatusMessageKind::Success,
+            );
         }
     }
 
@@ -266,6 +273,9 @@ impl App {
             KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.state.input_mode = InputMode::UnlinkConfirm;
             }
+            KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.restart_daemon();
+            }
             _ => {}
         }
     }
@@ -273,9 +283,8 @@ impl App {
     fn handle_unlink_confirm_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
-                if let Ok(mut guard) = self.client.lock() {
-                    guard.unlink();
-                }
+                // Unlink shuts the daemon down; the TUI exits afterwards.
+                let _ = self.send(DaemonCommand::Unlink);
                 self.state.set_status_message(
                     "Account unlinked. Exiting...".into(),
                     StatusMessageKind::Success,
@@ -352,84 +361,51 @@ impl App {
     }
 
     fn do_backup_add(&mut self, path: String) {
-        let result = match self.client.lock() {
-            Ok(guard) => guard.create_backup(std::path::Path::new(&path)),
-            Err(_) => {
-                self.state
-                    .set_status_message("Failed to acquire lock".into(), StatusMessageKind::Error);
-                return;
-            }
-        };
-        match result {
-            Ok(id) => self.state.set_status_message(
-                format!("Backup created (id {})", id),
+        match self.send(DaemonCommand::BackupCreate { path }) {
+            Some(DaemonResponse::BackupCreated { sync_id }) => self.state.set_status_message(
+                format!("Backup created (id {})", sync_id),
                 StatusMessageKind::Success,
             ),
             // Path-eligibility errors (e.g. inside an existing sync folder) are
             // raised by the C layer and surfaced here verbatim.
-            Err(e) => self
-                .state
-                .set_status_message(e.to_string(), StatusMessageKind::Error),
+            Some(DaemonResponse::Error(e)) => {
+                self.state.set_status_message(e, StatusMessageKind::Error)
+            }
+            _ => {}
         }
         self.refresh_backups();
     }
 
     fn do_backup_remove(&mut self, sync_id: u32) {
-        let result = match self.client.lock() {
-            Ok(guard) => guard.delete_backup(BackupId(sync_id)),
-            Err(_) => {
-                self.state
-                    .set_status_message("Failed to acquire lock".into(), StatusMessageKind::Error);
-                return;
-            }
-        };
-        match result {
-            Ok(()) => self.state.set_status_message(
-                format!("Backup {} removed", sync_id),
-                StatusMessageKind::Success,
-            ),
-            Err(e) => self
-                .state
-                .set_status_message(e.to_string(), StatusMessageKind::Error),
-        }
+        self.run_action(
+            DaemonCommand::BackupRemove { sync_id },
+            &format!("Backup {} removed", sync_id),
+        );
         self.refresh_backups();
     }
 
     fn do_backup_stop_device(&mut self) {
-        let result = match self.client.lock() {
-            Ok(guard) => guard.stop_device(None),
-            Err(_) => {
-                self.state
-                    .set_status_message("Failed to acquire lock".into(), StatusMessageKind::Error);
-                return;
-            }
-        };
-        match result {
-            Ok(()) => self
-                .state
-                .set_status_message("Device backups stopped".into(), StatusMessageKind::Success),
-            Err(e) => self
-                .state
-                .set_status_message(e.to_string(), StatusMessageKind::Error),
-        }
+        self.run_action(DaemonCommand::BackupStopDevice, "Device backups stopped");
         self.refresh_backups();
     }
 
-    /// Reload the backups list and device root name from the client.
+    /// Reload the backups list and device root name from the daemon.
     fn refresh_backups(&mut self) {
-        if let Ok(guard) = self.client.lock() {
-            match guard.list_backups() {
-                Ok(list) => {
-                    self.state.backups = list;
-                    self.state.backup_error = None;
-                }
-                Err(e) => {
-                    self.state.backups.clear();
-                    self.state.backup_error = Some(e.to_string());
-                }
+        match self.send(DaemonCommand::BackupList) {
+            Some(DaemonResponse::BackupList(list)) => {
+                self.state.backups = list;
+                self.state.backup_error = None;
             }
-            self.state.backup_root_name = guard.backup_root_name().ok();
+            Some(DaemonResponse::Error(e)) => {
+                self.state.backups.clear();
+                self.state.backup_error = Some(e);
+            }
+            _ => {}
         }
+        self.state.backup_root_name = match self.send(DaemonCommand::BackupRootName) {
+            Some(DaemonResponse::BackupRootName(name)) => Some(name),
+            _ => None,
+        };
         self.state.clamp_backup_selection();
     }
 
@@ -615,97 +591,70 @@ impl App {
     }
 
     fn start_crypto_unlock(&mut self) {
-        if let Ok(guard) = self.client.lock() {
-            if guard.is_crypto_started() {
+        match self.state.crypto_state {
+            CryptoState::Started => {
                 self.state.set_status_message(
                     "Crypto already unlocked".into(),
                     StatusMessageKind::Success,
                 );
                 return;
             }
-            if !guard.is_crypto_setup() {
+            CryptoState::NotSetup => {
                 self.state.set_status_message(
                     "Crypto not set up. Press Ctrl+L to setup".into(),
                     StatusMessageKind::Error,
                 );
                 return;
             }
+            _ => {}
         }
         self.state.input_mode = InputMode::PasswordPrompt(CryptoAction::Unlock);
         self.state.input_buffer.clear();
     }
 
     fn lock_crypto(&mut self) {
-        if let Ok(mut guard) = self.client.lock() {
-            if !guard.is_crypto_started() {
-                self.state
-                    .set_status_message("Crypto already locked".into(), StatusMessageKind::Success);
-                return;
-            }
-            match guard.stop_crypto() {
-                Ok(()) => {
-                    self.state.crypto_state = CryptoState::Stopped;
-                    self.state
-                        .set_status_message("Crypto locked".into(), StatusMessageKind::Success);
-                }
-                Err(e) => {
-                    self.state.set_status_message(
-                        format!("Failed to lock: {}", e),
-                        StatusMessageKind::Error,
-                    );
-                }
-            }
+        if self.state.crypto_state != CryptoState::Started {
+            self.state
+                .set_status_message("Crypto already locked".into(), StatusMessageKind::Success);
+            return;
         }
+        self.run_action(DaemonCommand::StopCrypto, "Crypto locked");
+        self.poll_status();
     }
 
     fn start_crypto_setup(&mut self) {
-        if let Ok(guard) = self.client.lock() {
-            if guard.is_crypto_setup() {
-                self.state
-                    .set_status_message("Crypto already set up".into(), StatusMessageKind::Success);
-                return;
-            }
+        if !matches!(
+            self.state.crypto_state,
+            CryptoState::NotSetup | CryptoState::Failed(_)
+        ) {
+            self.state
+                .set_status_message("Crypto already set up".into(), StatusMessageKind::Success);
+            return;
         }
         self.state.input_mode = InputMode::PasswordPrompt(CryptoAction::Setup);
         self.state.input_buffer.clear();
     }
 
     fn do_crypto_unlock(&mut self, password: String) {
-        let secret = SecretString::from(password);
-        if let Ok(mut guard) = self.client.lock() {
-            match guard.start_crypto(&secret) {
-                Ok(()) => {
-                    self.state.crypto_state = CryptoState::Started;
-                    self.state
-                        .set_status_message("Crypto unlocked".into(), StatusMessageKind::Success);
-                }
-                Err(e) => {
-                    self.state
-                        .set_status_message(format!("Failed: {}", e), StatusMessageKind::Error);
-                }
-            }
-        }
+        self.run_action(
+            DaemonCommand::StartCrypto {
+                password: Some(password),
+            },
+            "Crypto unlocked",
+        );
         self.state.input_mode = InputMode::Normal;
+        self.poll_status();
     }
 
     fn do_crypto_setup(&mut self, password: SecretString, hint: String) {
-        if let Ok(mut guard) = self.client.lock() {
-            match guard.setup_crypto(&password, &hint) {
-                Ok(()) => {
-                    self.state.crypto_state = CryptoState::SetupComplete;
-                    self.state.set_status_message(
-                        "Crypto set up successfully".into(),
-                        StatusMessageKind::Success,
-                    );
-                }
-                Err(e) => {
-                    self.state.set_status_message(
-                        format!("Setup failed: {}", e),
-                        StatusMessageKind::Error,
-                    );
-                }
-            }
-        }
+        self.run_action(
+            DaemonCommand::SetupCrypto {
+                password: password.expose_secret().to_string(),
+                hint,
+            },
+            "Crypto set up successfully",
+        );
+        self.poll_status();
     }
 
     // ===== Sync engine operations (pause / resume / stop) =====
@@ -737,41 +686,24 @@ impl App {
     }
 
     fn pause_sync(&mut self) {
-        let result = match self.client.lock() {
-            Ok(mut guard) => guard.pause(),
-            Err(_) => {
-                self.state
-                    .set_status_message("Failed to acquire lock".into(), StatusMessageKind::Error);
-                return;
-            }
-        };
-        match result {
-            Ok(()) => {
+        match self.send(DaemonCommand::Pause) {
+            Some(DaemonResponse::Ok) | Some(DaemonResponse::OkWithMessage(_)) => {
                 self.state.set_status_code(PSTATUS_PAUSED);
                 self.state
                     .set_status_message("Sync paused".into(), StatusMessageKind::Success);
             }
-            Err(e) => {
-                self.state.set_status_message(
-                    format!("Failed to pause: {}", e),
-                    StatusMessageKind::Error,
-                );
-            }
+            Some(DaemonResponse::Error(e)) => self
+                .state
+                .set_status_message(format!("Failed to pause: {}", e), StatusMessageKind::Error),
+            _ => {}
         }
+        self.poll_status();
     }
 
     fn resume_sync(&mut self) {
         let was_stopped = self.state.sync_engine_state() == SyncEngineState::Stopped;
-        let result = match self.client.lock() {
-            Ok(mut guard) => guard.resume(),
-            Err(_) => {
-                self.state
-                    .set_status_message("Failed to acquire lock".into(), StatusMessageKind::Error);
-                return;
-            }
-        };
-        match result {
-            Ok(()) => {
+        match self.send(DaemonCommand::Resume) {
+            Some(DaemonResponse::Ok) | Some(DaemonResponse::OkWithMessage(_)) => {
                 self.state.set_status_code(PSTATUS_READY);
                 let msg = if was_stopped {
                     "Sync started"
@@ -781,96 +713,59 @@ impl App {
                 self.state
                     .set_status_message(msg.into(), StatusMessageKind::Success);
             }
-            Err(e) => {
-                self.state.set_status_message(
-                    format!("Failed to resume: {}", e),
-                    StatusMessageKind::Error,
-                );
-            }
+            Some(DaemonResponse::Error(e)) => self
+                .state
+                .set_status_message(format!("Failed to resume: {}", e), StatusMessageKind::Error),
+            _ => {}
         }
+        self.poll_status();
     }
 
     fn stop_sync(&mut self) {
-        let result = match self.client.lock() {
-            Ok(mut guard) => guard.stop(),
-            Err(_) => {
-                self.state
-                    .set_status_message("Failed to acquire lock".into(), StatusMessageKind::Error);
-                return;
-            }
-        };
-        match result {
-            Ok(()) => {
+        match self.send(DaemonCommand::Stop) {
+            Some(DaemonResponse::Ok) | Some(DaemonResponse::OkWithMessage(_)) => {
                 self.state.set_status_code(PSTATUS_STOPPED);
                 self.state
                     .set_status_message("Sync stopped".into(), StatusMessageKind::Success);
             }
-            Err(e) => {
-                self.state
-                    .set_status_message(format!("Failed to stop: {}", e), StatusMessageKind::Error);
-            }
+            Some(DaemonResponse::Error(e)) => self
+                .state
+                .set_status_message(format!("Failed to stop: {}", e), StatusMessageKind::Error),
+            _ => {}
         }
+        self.poll_status();
     }
 
     // ===== Auth operations =====
 
     fn initiate_web_login(&mut self) {
-        // Acquire lock in a block so the guard is dropped before we use self again
-        let session_result = {
-            let mut guard = match self.client.lock() {
-                Ok(g) => g,
-                Err(_) => {
-                    self.state.set_status_message(
-                        "Failed to acquire lock".into(),
-                        StatusMessageKind::Error,
-                    );
-                    return;
-                }
-            };
-            guard.initiate_web_login(&WebLoginConfig::default())
-        };
-
-        match session_result {
-            Ok(session) => {
-                let url = session.login_url.clone();
-                let _qr = generate_qr_code(&url).ok();
+        // The daemon requests the login session and waits for completion in the
+        // background; on success it sets the auth token, which the next status
+        // poll observes. We just display the URL/QR.
+        match self.send(DaemonCommand::AuthBeginWeb) {
+            Some(DaemonResponse::AuthWeb { url, .. }) => {
                 self.state.input_mode = InputMode::AuthWebWaiting(url.clone());
-
-                // Try to open browser
                 let _ = crate::utils::browser::open_url(&url, true);
-
-                // Spawn background thread for waiting
-                let request_id = session.request_id.clone();
-                std::thread::spawn(move || {
-                    let _ = crate::wrapper::weblogin::wait_for_web_auth(&request_id);
-                });
             }
-            Err(e) => {
-                self.state.set_status_message(
-                    format!("Web login failed: {}", e),
-                    StatusMessageKind::Error,
-                );
-            }
+            Some(DaemonResponse::Error(e)) => self
+                .state
+                .set_status_message(format!("Web login failed: {}", e), StatusMessageKind::Error),
+            _ => {}
         }
     }
 
     fn submit_auth_token(&mut self, token: String) {
-        let secret = SecretString::from(token);
-        if let Ok(mut guard) = self.client.lock() {
-            match guard.set_auth_token(&secret, true) {
-                Ok(()) => {
-                    self.state.set_status_message(
-                        "Token set, authenticating...".into(),
-                        StatusMessageKind::Success,
-                    );
-                }
-                Err(e) => {
-                    self.state.set_status_message(
-                        format!("Token error: {}", e),
-                        StatusMessageKind::Error,
-                    );
-                }
+        match self.send(DaemonCommand::SetAuthToken { token }) {
+            Some(DaemonResponse::Ok) | Some(DaemonResponse::OkWithMessage(_)) => {
+                self.state.set_status_message(
+                    "Token set, authenticating...".into(),
+                    StatusMessageKind::Success,
+                );
             }
+            Some(DaemonResponse::Error(e)) => self
+                .state
+                .set_status_message(format!("Token error: {}", e), StatusMessageKind::Error),
+            _ => {}
         }
     }
 
@@ -908,104 +803,60 @@ impl App {
         self.state.log_state.select(Some(i));
     }
 
-    // ===== Tick =====
+    /// Attempt to (re)start the daemon after it became unavailable.
+    fn restart_daemon(&mut self) {
+        match crate::daemon::process::spawn_background_daemon(
+            /* allow_unauthenticated = */ true,
+        ) {
+            Ok(()) => self
+                .state
+                .set_status_message("Restarting daemon...".into(), StatusMessageKind::Success),
+            Err(e) => self
+                .state
+                .set_status_message(format!("Restart failed: {}", e), StatusMessageKind::Error),
+        }
+    }
 
-    /// Periodic tick -- polls PCloudClient for state changes.
-    pub fn tick(&mut self) {
-        self.state.clear_expired_status_message();
+    // ===== Tick / polling =====
 
-        if let Ok(mut guard) = self.client.lock() {
-            // Refresh states
-            guard.refresh_auth_state();
-            guard.refresh_crypto_state();
-            guard.refresh_mount_state();
-
-            self.state.auth_state = guard.auth_state().clone();
-            self.state.crypto_state = guard.crypto_state().clone();
-            self.state.fs_mounted = guard.is_mounted();
-            self.state.mountpoint = guard.mountpoint().map(|p| p.display().to_string());
-
-            // Get account info
-            self.state.account_email = guard.get_username();
-
-            // Get quota
-            let (used, total) = get_quota();
-            self.state.quota_used = used;
-            self.state.quota_total = total;
-
-            // Get account location
-            self.state.account_location = get_location();
-
-            // Get crypto folder path
-            if guard.is_crypto_started() && guard.is_mounted() {
-                if self.state.crypto_folder_path.is_none() {
-                    if let Some(folder_id) = guard.get_crypto_folder_id() {
-                        self.state.crypto_folder_path = guard
-                            .get_fs_path_by_folder_id(folder_id)
-                            .map(|p| p.display().to_string());
-                    }
+    /// Fetch a full dashboard snapshot from the daemon and apply it.
+    fn poll_status(&mut self) {
+        match self.send(DaemonCommand::StatusFull) {
+            Some(DaemonResponse::StatusFull(snap)) => self.apply_snapshot(*snap),
+            _ => {
+                if self.state.daemon_unavailable {
+                    self.state.set_status_message(
+                        "Daemon unavailable \u{2014} press Ctrl+R to restart".into(),
+                        StatusMessageKind::Error,
+                    );
                 }
-            } else {
-                self.state.crypto_folder_path = None;
-            }
-
-            // Check if auth completed while in web waiting mode
-            if matches!(self.state.input_mode, InputMode::AuthWebWaiting(_))
-                && self.state.auth_state == AuthState::Authenticated
-            {
-                self.state.needs_clear = true;
-                self.state.input_mode = InputMode::Normal;
-                self.state.set_status_message(
-                    "Authentication successful!".into(),
-                    StatusMessageKind::Success,
-                );
             }
         }
+    }
 
-        // Keep the backups list current while it is on screen. Done after the
-        // guard above is dropped, since refresh_backups locks the client itself.
+    /// Fetch activity-log entries newer than the cursor and append them.
+    fn poll_activity(&mut self) {
+        if let Some(DaemonResponse::Activity { entries, cursor }) =
+            self.send(DaemonCommand::ActivitySince {
+                cursor: self.activity_cursor,
+            })
+        {
+            for entry in entries {
+                self.state.push_activity(entry);
+            }
+            self.activity_cursor = cursor;
+        }
+    }
+
+    /// Periodic tick -- polls the daemon for state and activity over IPC.
+    pub fn tick(&mut self) {
+        self.state.clear_expired_status_message();
+        self.poll_status();
+        self.poll_activity();
+
+        // Keep the backups list current while the Backups screen is shown.
         if self.state.active_screen == Screen::Backups {
             self.refresh_backups();
         }
     }
-}
-
-/// Get account location label from the C library settings DB.
-fn get_location() -> Option<String> {
-    let loc_id = unsafe {
-        let key = std::ffi::CString::new("location_id").unwrap();
-        raw::psync_get_uint_value(key.as_ptr())
-    };
-    match loc_id {
-        0 => None,
-        1 => Some("\u{1F30E} US".to_string()),
-        2 => Some("\u{1F30D} EU".to_string()),
-        other => Some(format!("\u{1F310} Region {}", other)),
-    }
-}
-
-/// Get quota values from the C library settings DB.
-fn get_quota() -> (u64, u64) {
-    let used = unsafe {
-        let key = std::ffi::CString::new("usedquota").unwrap();
-        raw::psync_get_uint_value(key.as_ptr())
-    };
-    let total = unsafe {
-        let key = std::ffi::CString::new("quota").unwrap();
-        raw::psync_get_uint_value(key.as_ptr())
-    };
-    (used, total)
-}
-
-/// Get current time as HH:MM:SS string.
-fn chrono_time() -> String {
-    use std::time::SystemTime;
-    let now = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let secs = now % 60;
-    let mins = (now / 60) % 60;
-    let hours = (now / 3600) % 24;
-    format!("{:02}:{:02}:{:02}", hours, mins, secs)
 }

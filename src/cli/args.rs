@@ -186,6 +186,12 @@ pub struct StartArgs {
     /// Auth token to use for this session (overrides saved credentials).
     #[arg(short = 't', long = "token", value_name = "TOKEN")]
     pub token: Option<String>,
+
+    /// Start the daemon even without saved credentials, leaving login to be
+    /// driven later over IPC (used when the TUI auto-starts a daemon on first
+    /// run). Hidden: not part of the user-facing surface.
+    #[arg(long = "allow-unauthenticated", hide = true)]
+    pub allow_unauthenticated: bool,
 }
 
 // ============================================================================
@@ -517,7 +523,7 @@ mod tests {
     fn start_without_path_parses() {
         let cli = Cli::parse_from_args(["pcloud-cli", "start"]);
         match cli.command {
-            Some(Command::Start(StartArgs { path, token })) => {
+            Some(Command::Start(StartArgs { path, token, .. })) => {
                 assert!(path.is_none());
                 assert!(token.is_none());
             }
@@ -529,7 +535,7 @@ mod tests {
     fn start_with_path_and_token_parses() {
         let cli = Cli::parse_from_args(["pcloud-cli", "start", "/mnt/pcloud", "--token", "TOK"]);
         match cli.command {
-            Some(Command::Start(StartArgs { path, token })) => {
+            Some(Command::Start(StartArgs { path, token, .. })) => {
                 assert_eq!(path, Some(PathBuf::from("/mnt/pcloud")));
                 assert_eq!(token.as_deref(), Some("TOK"));
             }

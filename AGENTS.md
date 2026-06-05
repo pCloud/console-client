@@ -49,21 +49,35 @@ src/
 |   |-- mod.rs           # Re-exports, module organization
 |   |-- raw.rs           # Unsafe extern "C" function declarations
 |   |-- types.rs         # C struct definitions, constants
-|   +-- callbacks.rs     # Callback trampolines with panic guards
+|   |-- callbacks.rs     # Callback trampolines with panic guards
+|   +-- events.rs        # Event description helpers (describe_event, now_hms)
 |
 |-- wrapper/             # Safe Rust wrappers over FFI
-|   |-- mod.rs           # Re-exports PCloudClient, states
-|   |-- client.rs        # Main PCloudClient struct
+|   |-- mod.rs           # Re-exports PCloudClient, states, snapshots
+|   |-- client.rs        # Main PCloudClient struct, AuthState/CryptoState
 |   |-- auth.rs          # Authentication operations
 |   |-- crypto.rs        # Crypto folder operations
 |   |-- filesystem.rs    # Mount/unmount, sync folders
-|   +-- backup.rs        # Backup CRUD and status
+|   |-- backup.rs        # Backup CRUD and status
+|   +-- status.rs        # Serializable snapshots shared over IPC
+|                        #   (StatusSnapshot, SyncEngineState,
+|                        #    ActivityEntry, DashboardSnapshot)
 |
 |-- daemon/              # Background daemon functionality
 |   |-- mod.rs           # Re-exports, init function
-|   |-- process.rs       # Daemonization, PID file management
+|   |-- process.rs       # Daemonization, PID file, spawn_background_daemon
 |   |-- signals.rs       # Signal handlers (SIGTERM, SIGHUP)
-|   +-- ipc.rs           # Unix socket IPC protocol
+|   |-- ipc.rs           # Unix socket IPC protocol, DaemonContext
+|   +-- activity.rs      # Bounded activity ring buffer (ActivityLog)
+|
+|-- tui/                 # Terminal UI dashboard (pure IPC client)
+|   |-- mod.rs           # Entry point: run(daemon, cli), render loop
+|   |-- app.rs           # App: key handling, IPC polling, tick()
+|   |-- state.rs         # TuiState, enums (Screen, Panel, InputMode)
+|   |-- theme.rs         # Color constants and Style factories
+|   |-- ui.rs            # Top-level render dispatch
+|   +-- widgets/         # One file per visual component
+|                        #   (see src/tui/CLAUDE.md for the full guide)
 |
 |-- security/            # Security utilities
 |   |-- mod.rs           # Re-exports
@@ -486,6 +500,17 @@ let err = FilesystemError::from_code(code);
 - `BackupList` - List configured backups for the current device
 - `BackupStatus { sync_id }` - Backup status (optional sync id filter)
 - `BackupRootName` - Return the backup root folder name
+- `StatusFull` - Full dashboard snapshot in one round-trip (drives the TUI)
+- `ActivitySince { cursor }` - Activity-log entries newer than `cursor` (pass `0` first)
+- `Pause` - Pause sync transfers (`psync_pause`); monitoring continues
+- `Stop` - Stop sync (`psync_stop`); no network/local scans until resumed
+- `Resume` - Resume sync after a pause/stop (`psync_resume`)
+- `SetupCrypto { password, hint }` - First-time crypto setup (vs. `StartCrypto` which unlocks)
+- `AuthBeginWeb` - Begin a browser-based login flow; daemon waits in a background thread
+- `SetAuthToken { token }` - Set the auth token directly (token-paste login path)
+
+Passwords/tokens in the commands above are redacted in `Debug` and zeroized
+after receipt.
 
 ### Responses (DaemonResponse)
 
@@ -498,6 +523,9 @@ let err = FilesystemError::from_code(code);
 - `BackupList(Vec<BackupInfo>)` - Response to `BackupList`
 - `BackupStatus(BackupStatusInfo)` - Response to `BackupStatus`
 - `BackupRootName(String)` - Response to `BackupRootName`
+- `StatusFull(Box<DashboardSnapshot>)` - Response to `StatusFull`
+- `Activity { entries, cursor }` - Response to `ActivitySince` (new entries + next cursor)
+- `AuthWeb { url, qr }` - Response to `AuthBeginWeb` (login URL + optional QR code)
 
 ### Hierarchical CLI surface
 
@@ -508,6 +536,7 @@ pcloud-cli                          # bare invocation → TUI dashboard
 pcloud-cli auth   login [--token TOKEN] | logout | status | unlink [--yes]
 pcloud-cli mount  [PATH] [--token TOKEN]      # foreground mount, blocks
 pcloud-cli start  [PATH] [--token TOKEN]      # background daemon mount
+                  [--allow-unauthenticated]   #   (hidden) start engine with no creds
 pcloud-cli stop                               # graceful daemon shutdown
 pcloud-cli status                             # daemon + auth + crypto state
 pcloud-cli crypto start [--password-file FILE] | stop | status
@@ -519,14 +548,32 @@ pcloud-cli doctor                             # env / dependency diagnostics
 
 ### Daemon auto-start
 
-When a command that needs a running daemon is invoked (`status`, `crypto *`,
-`backup *`) and no daemon is alive on the per-UID socket,
-`main::ensure_daemon_running` spawns a headless `pcloud-cli start`
-**only if** saved credentials exist in the local DB. If no credentials are
-saved, it errors with a hint telling the user to run `pcloud-cli auth login`
-once (interactive web flow) or to pass `--token` / set `PCLOUD_AUTH_TOKEN`.
-After a successful login the token is persisted by default, so subsequent
-calls auto-start a daemon.
+`main::ensure_daemon_running(config, daemon_client, allow_unauthenticated)`
+brings up a daemon on the per-UID socket if one is not already alive. It has
+two modes:
+
+- **Authenticated callers** (`status`, `crypto *`, `backup *`) pass
+  `allow_unauthenticated = false`. The daemon is spawned via
+  `daemon::process::spawn_background_daemon(false)` (`pcloud-cli start`)
+  **only if** saved credentials exist in the local DB. If no credentials are
+  saved, it errors with a hint telling the user to run `pcloud-cli auth login`
+  once (interactive web flow) or to pass `--token` / set `PCLOUD_AUTH_TOKEN`.
+  After a successful login the token is persisted by default, so subsequent
+  calls auto-start a daemon.
+
+- **The TUI** passes `allow_unauthenticated = true`. The creds check is skipped
+  and `spawn_background_daemon(true)` launches `pcloud-cli start
+  --allow-unauthenticated`. With that hidden flag, `run_start_subcommand`
+  starts the engine (`psync_init` + `set_fs_root` + `start_sync`) even with no
+  saved credentials; the engine idles in `LOGIN_REQUIRED` until a client drives
+  login over IPC (`AuthBeginWeb` / `SetAuthToken`). The TUI never initializes a
+  pclsync engine of its own — it stays a pure IPC client.
+
+The daemon retains the live file-event stream by registering an event callback
+that feeds the bounded `daemon::activity::ActivityLog` ring buffer (200
+sequence-tagged entries). Status is polled on demand via `psync_get_status`, so
+the status callback is a no-op. The IPC server receives a
+`DaemonContext { client, activity }`.
 
 ## Debugging Tips
 

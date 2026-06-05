@@ -249,6 +249,35 @@ pub fn stop_daemon(config: &DaemonConfig) -> Result<()> {
     }
 }
 
+/// Spawn a detached background daemon by re-executing this binary as
+/// `pcloud-cli start`.
+///
+/// Stdio is redirected to `/dev/null` so the child fully detaches from the
+/// caller's terminal. When `allow_unauthenticated` is set, the daemon starts
+/// even without saved credentials (used by the TUI, which drives login over
+/// IPC). The caller is responsible for polling until the daemon is alive.
+pub fn spawn_background_daemon(allow_unauthenticated: bool) -> Result<()> {
+    let exe = std::env::current_exe().map_err(PCloudError::Io)?;
+    let mut command = std::process::Command::new(&exe);
+    command.arg("start");
+    if allow_unauthenticated {
+        command.arg("--allow-unauthenticated");
+    }
+    command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| {
+            PCloudError::Daemon(DaemonError::DaemonizeFailed(format!(
+                "failed to spawn `{} start`: {}",
+                exe.display(),
+                e
+            )))
+        })?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

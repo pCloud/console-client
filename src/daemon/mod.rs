@@ -73,6 +73,7 @@
 //! - `signals`: Signal handling for graceful shutdown
 //! - `ipc`: Unix domain socket IPC server and client
 
+pub mod activity;
 pub mod ipc;
 pub mod process;
 pub mod signals;

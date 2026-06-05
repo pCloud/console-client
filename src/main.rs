@@ -36,11 +36,12 @@ use console_client::daemon::{
     is_daemon_running, DaemonClient, DaemonCommand, DaemonConfig, DaemonResponse,
 };
 use console_client::error::{AuthError, DaemonError, PCloudError};
-use console_client::ffi::{register_status_callback, status_callback_trampoline, status_to_string};
-use console_client::security::{
-    prompt_for_password, resolve_auth_token, resolve_crypto_password, ResolvedSecrets,
-    SecurePassword,
+use console_client::ffi::events::{describe_event, now_hms};
+use console_client::ffi::{
+    event_callback_trampoline, register_event_callback, register_status_callback,
+    status_callback_trampoline, status_to_string,
 };
+use console_client::security::{prompt_for_password, resolve_auth_token, resolve_crypto_password};
 use console_client::utils::browser::{has_display, open_url};
 use console_client::utils::qrcode::{can_display_qr, generate_qr_code};
 use console_client::utils::terminal::{print_boxed, print_status, StatusIndicator};
@@ -301,13 +302,16 @@ fn run_start_subcommand(args: StartArgs) -> Result<()> {
             .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
         let has_creds = guard.has_saved_credentials();
         drop(guard);
-        if !has_creds {
+        if !has_creds && !args.allow_unauthenticated {
             print_status(
                 StatusIndicator::Info,
                 "Authentication required before daemon can start",
             );
             handle_interactive_auth(&client, /* save = */ true)?;
         }
+        // When `allow_unauthenticated` is set we start the engine with no
+        // credentials; it idles in LOGIN_REQUIRED until a client drives login
+        // over IPC (AuthBeginWeb / SetAuthToken).
         None
     };
     // Whether the deferred token came from a CLI flag (persist) or from the env
@@ -326,7 +330,20 @@ fn run_start_subcommand(args: StartArgs) -> Result<()> {
     // -- We are now running in the daemon child process. --
 
     setup_daemon_signals()?;
+
+    // Capture the live file-event stream into a ring buffer so IPC clients (the
+    // TUI) can poll recent activity. Status itself is polled on demand via
+    // `psync_get_status`, so the status callback stays a no-op.
+    let activity = std::sync::Arc::new(console_client::daemon::activity::ActivityLog::new());
     register_status_callback(|_status| {});
+    {
+        let activity = activity.clone();
+        register_event_callback(move |event_type, event_data| {
+            if let Some((description, is_error)) = describe_event(event_type, event_data) {
+                activity.push(now_hms(), description, is_error);
+            }
+        });
+    }
 
     // Apply the deferred CLI/env token post-fork so the SQLite write happens
     // in the child's address space.
@@ -349,14 +366,17 @@ fn run_start_subcommand(args: StartArgs) -> Result<()> {
         let mut guard = client
             .lock()
             .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
-        guard.start_sync(Some(status_callback_trampoline), None);
+        guard.start_sync(
+            Some(status_callback_trampoline),
+            Some(event_callback_trampoline),
+        );
         guard.refresh_mount_state();
     }
 
     let server = console_client::daemon::DaemonServer::new(config.socket_path())?;
-    let client_for_ipc = client.clone();
+    let ctx = console_client::daemon::ipc::DaemonContext::new(client.clone(), activity);
     let ipc_thread = std::thread::spawn(move || {
-        if let Err(e) = server.run(client_for_ipc) {
+        if let Err(e) = server.run(ctx) {
             eprintln!("IPC server error: {}", e);
         }
     });
@@ -405,7 +425,7 @@ fn run_status_subcommand() -> Result<()> {
     let daemon_client = DaemonClient::new(config.socket_path());
 
     if !daemon_client.is_daemon_alive() {
-        ensure_daemon_running(&config, &daemon_client)?;
+        ensure_daemon_running(&config, &daemon_client, false)?;
     }
 
     let response = daemon_client.send_command(DaemonCommand::Status)?;
@@ -424,7 +444,7 @@ fn run_crypto_subcommand(op: CryptoOp) -> Result<()> {
     match op {
         CryptoOp::Start { password_file } => {
             let password = resolve_crypto_password_for_start(password_file.as_deref())?;
-            ensure_daemon_running(&config, &daemon_client)?;
+            ensure_daemon_running(&config, &daemon_client, false)?;
             let response = daemon_client.send_command(DaemonCommand::StartCrypto {
                 password: Some(password.expose_secret().to_string()),
             })?;
@@ -438,7 +458,7 @@ fn run_crypto_subcommand(op: CryptoOp) -> Result<()> {
             Ok(())
         }
         CryptoOp::Stop => {
-            ensure_daemon_running(&config, &daemon_client)?;
+            ensure_daemon_running(&config, &daemon_client, false)?;
             let response = daemon_client.send_command(DaemonCommand::StopCrypto)?;
             print_daemon_response(&response);
             if matches!(response, DaemonResponse::Error(_)) {
@@ -449,7 +469,7 @@ fn run_crypto_subcommand(op: CryptoOp) -> Result<()> {
             Ok(())
         }
         CryptoOp::Status => {
-            ensure_daemon_running(&config, &daemon_client)?;
+            ensure_daemon_running(&config, &daemon_client, false)?;
             let response = daemon_client.send_command(DaemonCommand::Status)?;
             if let DaemonResponse::Status { crypto_started, .. } = response {
                 if crypto_started {
@@ -495,7 +515,7 @@ fn run_backup_subcommand(op: BackupOp) -> Result<()> {
     let cmd = backup_op_to_daemon_command(&op);
 
     if !daemon_client.is_daemon_alive() {
-        ensure_daemon_running(&config, &daemon_client)?;
+        ensure_daemon_running(&config, &daemon_client, false)?;
     }
 
     let response = daemon_client.send_command(cmd)?;
@@ -526,39 +546,19 @@ fn backup_op_to_daemon_command(op: &BackupOp) -> DaemonCommand {
 // ============================================================================
 
 fn run_tui_mode() -> Result<()> {
-    let client = PCloudClient::init()?;
-    let env_secrets = ResolvedSecrets::from_env()?;
-
-    apply_auth(
-        &client,
-        /* cli_token = */ None,
-        env_secrets.auth_token,
-        /* save = */ true,
+    // The TUI is a pure IPC client: it never initializes a pclsync engine of
+    // its own. Ensure a daemon is running (auto-starting an unauthenticated one
+    // on first run), then drive everything — including login — over IPC.
+    let config = DaemonConfig::default();
+    let daemon_client = DaemonClient::new(config.socket_path());
+    ensure_daemon_running(
+        &config,
+        &daemon_client,
+        /* allow_unauthenticated = */ true,
     )?;
 
-    let mountpoint = resolve_mountpoint(None);
-    {
-        let mut guard = client
-            .lock()
-            .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
-        console_client::utils::ensure_mountpoint(&mountpoint)?;
-        guard.set_fs_root(&mountpoint)?;
-    }
-
-    if let Some(env_crypto) = env_secrets.crypto_password {
-        let secure = SecurePassword::from_secret(env_crypto);
-        let crypto_secret = SecretString::from(secure.expose().to_string());
-        let mut guard = client
-            .lock()
-            .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
-        if !guard.is_crypto_setup() {
-            guard.setup_crypto(&crypto_secret, "")?;
-        }
-        guard.start_crypto(&crypto_secret)?;
-    }
-
     let cli_for_tui = Cli::default();
-    console_client::tui::run(client, &cli_for_tui)
+    console_client::tui::run(daemon_client, &cli_for_tui)
 }
 
 // ============================================================================
@@ -703,7 +703,11 @@ fn handle_web_login(client: &Arc<Mutex<PCloudClient>>, save_credentials: bool) -
 /// uses the default mountpoint) and polls the IPC socket until it responds or
 /// the 5-second deadline elapses. If no credentials are saved, errors out
 /// with a hint.
-fn ensure_daemon_running(config: &DaemonConfig, daemon_client: &DaemonClient) -> Result<()> {
+fn ensure_daemon_running(
+    config: &DaemonConfig,
+    daemon_client: &DaemonClient,
+    allow_unauthenticated: bool,
+) -> Result<()> {
     if daemon_client.is_daemon_alive() {
         return Ok(());
     }
@@ -713,7 +717,12 @@ fn ensure_daemon_running(config: &DaemonConfig, daemon_client: &DaemonClient) ->
         "No daemon detected; attempting auto-start...",
     );
 
-    {
+    // Authenticated callers (status/crypto/backup) require saved credentials
+    // before auto-starting. The TUI passes `allow_unauthenticated` so it can
+    // bring up a daemon that idles in LOGIN_REQUIRED and drive login over IPC.
+    // We deliberately do NOT `psync_init()` here in that case — keeping the
+    // caller a pure IPC client with no engine of its own.
+    if !allow_unauthenticated {
         let client = PCloudClient::init()?;
         let guard = client
             .lock()
@@ -731,20 +740,7 @@ fn ensure_daemon_running(config: &DaemonConfig, daemon_client: &DaemonClient) ->
         }
     }
 
-    let exe = std::env::current_exe().map_err(PCloudError::Io)?;
-    std::process::Command::new(&exe)
-        .arg("start")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map_err(|e| {
-            PCloudError::Daemon(DaemonError::DaemonizeFailed(format!(
-                "failed to spawn `{} start`: {}",
-                exe.display(),
-                e
-            )))
-        })?;
+    console_client::daemon::process::spawn_background_daemon(allow_unauthenticated)?;
 
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
@@ -818,6 +814,11 @@ fn print_daemon_response(response: &DaemonResponse) {
             }
         }
         DaemonResponse::BackupRootName(name) => println!("{}", name),
+        // Dashboard/auth responses are consumed by the TUI over IPC, not the
+        // CLI's response printer; fall back to their Display form if seen.
+        other @ (DaemonResponse::StatusFull(_)
+        | DaemonResponse::Activity { .. }
+        | DaemonResponse::AuthWeb { .. }) => println!("{}", other),
     }
 }
 

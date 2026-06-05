@@ -83,12 +83,14 @@ pub mod backup;
 mod client;
 mod crypto;
 mod filesystem;
+pub mod status;
 pub mod weblogin;
 
 // Re-export the main types
 pub use backup::{BackupId, BackupInfo, BackupStatusInfo};
 pub use client::{AuthState, CryptoState, PCloudClient};
 pub use filesystem::{SyncFolder, SyncType};
+pub use status::{ActivityEntry, DashboardSnapshot, StatusSnapshot, SyncEngineState};
 pub use weblogin::{WebLoginConfig, WebLoginSession};
 
 #[cfg(test)]

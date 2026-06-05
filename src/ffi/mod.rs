@@ -94,6 +94,7 @@
 //! - Application-level overlay callbacks for interactive mode
 
 pub mod callbacks;
+pub mod events;
 pub mod raw;
 pub mod types;
 

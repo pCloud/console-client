@@ -47,7 +47,7 @@ use crate::ffi::types::pstatus_t;
 static PCLOUD_CLIENT: OnceCell<Arc<Mutex<PCloudClient>>> = OnceCell::new();
 
 /// State of authentication with the pCloud service.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub enum AuthState {
     /// Not authenticated - login required
     #[default]
@@ -61,7 +61,7 @@ pub enum AuthState {
 }
 
 /// State of crypto (encryption) operations.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub enum CryptoState {
     /// Crypto has not been set up for this account
     #[default]
@@ -252,6 +252,38 @@ impl PCloudClient {
     /// Check if the client has been initialized.
     pub fn is_initialized(&self) -> bool {
         self.initialized
+    }
+
+    /// Read the account storage quota `(used, total)` in bytes from the C
+    /// library's settings DB. Returns `(0, 0)` when the values are unavailable
+    /// (e.g. before login).
+    pub fn get_quota(&self) -> (u64, u64) {
+        let read = |key: &str| -> u64 {
+            match std::ffi::CString::new(key) {
+                // Safety: key is a valid null-terminated C string; the library
+                // returns 0 for unknown keys.
+                Ok(k) => unsafe { raw::psync_get_uint_value(k.as_ptr()) },
+                Err(_) => 0,
+            }
+        };
+        (read("usedquota"), read("quota"))
+    }
+
+    /// Read the account data-region label from the C library settings DB.
+    ///
+    /// Returns `None` when the region is unknown (e.g. before login).
+    pub fn get_account_location(&self) -> Option<String> {
+        let loc_id = match std::ffi::CString::new("location_id") {
+            // Safety: key is a valid null-terminated C string.
+            Ok(k) => unsafe { raw::psync_get_uint_value(k.as_ptr()) },
+            Err(_) => 0,
+        };
+        match loc_id {
+            0 => None,
+            1 => Some("\u{1F30E} US".to_string()),
+            2 => Some("\u{1F30D} EU".to_string()),
+            other => Some(format!("\u{1F310} Region {}", other)),
+        }
     }
 
     /// Get the current sync status from the C library.

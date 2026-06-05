@@ -3,97 +3,10 @@ use std::time::Instant;
 
 use ratatui::widgets::ListState;
 
-use crate::ffi::types::{
-    is_error_status, pstatus_t, status_to_string, PSTATUS_LOGIN_REQUIRED, PSTATUS_PAUSED,
-    PSTATUS_STOPPED,
-};
+use crate::ffi::types::status_to_string;
 use crate::wrapper::{AuthState, BackupInfo, CryptoState};
-
-/// High-level state of the sync engine, derived from `pstatus_t.status`.
-///
-/// Used by the dashboard key handler and the help bar to decide which of
-/// pause/resume/stop is meaningful at any given moment.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SyncEngineState {
-    /// Sync is actively running (downloading, uploading, scanning, ready, ...).
-    Running,
-    /// `psync_pause()` was called — monitoring continues but transfers are halted.
-    Paused,
-    /// `psync_stop()` was called — no network or local scans until resumed.
-    Stopped,
-    /// Engine is unavailable (login required / error state). Chords are inert.
-    Inactive,
-}
-
-/// Copy of pstatus_t fields that is Clone + Send.
-#[derive(Clone, Debug)]
-#[allow(dead_code)]
-pub struct StatusSnapshot {
-    pub status: u32,
-    pub status_str: String,
-    pub files_to_download: u32,
-    pub files_downloading: u32,
-    pub files_to_upload: u32,
-    pub files_uploading: u32,
-    pub download_speed: u32,
-    pub upload_speed: u32,
-    pub bytes_to_download: u64,
-    pub bytes_downloaded: u64,
-    pub bytes_to_upload: u64,
-    pub bytes_uploaded: u64,
-    pub remote_is_full: bool,
-    pub local_is_full: bool,
-}
-
-impl StatusSnapshot {
-    pub fn from_pstatus(s: &pstatus_t) -> Self {
-        Self {
-            status: s.status,
-            status_str: status_to_string(s.status).to_string(),
-            files_to_download: s.filestodownload,
-            files_downloading: s.filesdownloading,
-            files_to_upload: s.filestoupload,
-            files_uploading: s.filesuploading,
-            download_speed: s.downloadspeed,
-            upload_speed: s.uploadspeed,
-            bytes_to_download: s.bytestodownload,
-            bytes_downloaded: s.bytesdownloaded,
-            bytes_to_upload: s.bytestoupload,
-            bytes_uploaded: s.bytesuploaded,
-            remote_is_full: s.remoteisfull != 0,
-            local_is_full: s.localisfull != 0,
-        }
-    }
-}
-
-impl Default for StatusSnapshot {
-    fn default() -> Self {
-        Self {
-            status: PSTATUS_LOGIN_REQUIRED,
-            status_str: "Connecting...".to_string(),
-            files_to_download: 0,
-            files_downloading: 0,
-            files_to_upload: 0,
-            files_uploading: 0,
-            download_speed: 0u32,
-            upload_speed: 0u32,
-            bytes_to_download: 0,
-            bytes_downloaded: 0,
-            bytes_to_upload: 0,
-            bytes_uploaded: 0,
-            remote_is_full: false,
-            local_is_full: false,
-        }
-    }
-}
-
-/// A single entry in the activity log.
-#[derive(Clone, Debug)]
-pub struct ActivityEntry {
-    pub timestamp: String,
-    pub description: String,
-    pub is_error: bool,
-}
+// Re-exported so existing `crate::tui::state::*` references keep resolving.
+pub use crate::wrapper::{ActivityEntry, StatusSnapshot, SyncEngineState};
 
 /// Top-level screen / tab.
 #[derive(Clone, Debug, PartialEq)]
@@ -227,6 +140,9 @@ pub struct TuiState {
     /// Set when switching between screens that have incompatible layouts
     /// (e.g. auth QR code → dashboard) to prevent stale cell artifacts.
     pub needs_clear: bool,
+    /// Set when an IPC call to the daemon fails; cleared on the next success.
+    /// Drives the "daemon unavailable" hint and the Ctrl+R restart affordance.
+    pub daemon_unavailable: bool,
 }
 
 impl TuiState {
@@ -259,6 +175,7 @@ impl TuiState {
             status_message_at: None,
             scroll_offset: 0,
             needs_clear: false,
+            daemon_unavailable: false,
         }
     }
 
@@ -315,18 +232,13 @@ impl TuiState {
     /// Map the raw `pstatus_t.status` code to the high-level engine state
     /// that drives the dashboard's pause/resume/stop chords.
     pub fn sync_engine_state(&self) -> SyncEngineState {
-        match self.status.status {
-            PSTATUS_PAUSED => SyncEngineState::Paused,
-            PSTATUS_STOPPED => SyncEngineState::Stopped,
-            code if is_error_status(code) => SyncEngineState::Inactive,
-            _ => SyncEngineState::Running,
-        }
+        self.status.sync_engine_state()
     }
 
     /// Optimistically set the cached status code (and derived label) so the
-    /// dashboard reflects a user-triggered action before the next C-side
-    /// status callback arrives. The next `TuiEvent::StatusUpdate` overwrites
-    /// this with the authoritative value from pclsync.
+    /// dashboard reflects a user-triggered action before the next status poll
+    /// arrives. The next `StatusFull` snapshot from the daemon overwrites this
+    /// with the authoritative value from pclsync.
     pub fn set_status_code(&mut self, code: u32) {
         self.status.status = code;
         self.status.status_str = status_to_string(code).to_string();
@@ -337,7 +249,8 @@ impl TuiState {
 mod tests {
     use super::*;
     use crate::ffi::types::{
-        PSTATUS_BAD_LOGIN_DATA, PSTATUS_DOWNLOADINGANDUPLOADING, PSTATUS_READY, PSTATUS_SCANNING,
+        PSTATUS_BAD_LOGIN_DATA, PSTATUS_DOWNLOADINGANDUPLOADING, PSTATUS_LOGIN_REQUIRED,
+        PSTATUS_PAUSED, PSTATUS_READY, PSTATUS_SCANNING, PSTATUS_STOPPED,
     };
 
     #[test]

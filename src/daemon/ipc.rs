@@ -49,9 +49,13 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
 
+use crate::daemon::activity::ActivityLog;
 use crate::error::{DaemonError, PCloudError, Result};
 use crate::security::SecurePassword;
-use crate::wrapper::{BackupId, BackupInfo, BackupStatusInfo, PCloudClient};
+use crate::wrapper::{
+    ActivityEntry, BackupId, BackupInfo, BackupStatusInfo, DashboardSnapshot, PCloudClient,
+    StatusSnapshot,
+};
 
 /// Commands that can be sent to the daemon.
 ///
@@ -148,6 +152,55 @@ pub enum DaemonCommand {
 
     /// Print the backup root folder name for this device.
     BackupRootName,
+
+    /// Fetch a full dashboard snapshot (status + account info) in one
+    /// round-trip. Drives the TUI dashboard when it runs as a pure IPC client.
+    StatusFull,
+
+    /// Fetch activity-log entries newer than `cursor`.
+    ///
+    /// Returns [`DaemonResponse::Activity`] with the new entries and an updated
+    /// cursor. Pass `0` on the first call.
+    ActivitySince {
+        /// Highest sequence id the client has already seen.
+        cursor: u64,
+    },
+
+    /// Pause sync transfers (`psync_pause`); monitoring continues.
+    Pause,
+
+    /// Stop sync (`psync_stop`); no network or local scans until resumed.
+    Stop,
+
+    /// Resume sync after a pause/stop (`psync_resume`).
+    Resume,
+
+    /// First-time crypto setup with password and recovery hint.
+    ///
+    /// Distinct from [`DaemonCommand::StartCrypto`], which unlocks already
+    /// set-up crypto. The password is zeroized after receipt.
+    SetupCrypto {
+        /// The crypto password. Will be zeroized after processing.
+        password: String,
+        /// The recovery hint stored alongside the crypto setup.
+        hint: String,
+    },
+
+    /// Begin a browser-based login flow.
+    ///
+    /// The daemon requests a login request id, spawns a background thread to
+    /// wait for completion (which sets the auth token in pclsync on success),
+    /// and returns the login URL/QR via [`DaemonResponse::AuthWeb`]. The client
+    /// observes completion by polling [`DaemonCommand::StatusFull`].
+    AuthBeginWeb,
+
+    /// Set the auth token directly (token-paste login path).
+    ///
+    /// The token is zeroized after receipt.
+    SetAuthToken {
+        /// The pCloud auth token. Will be zeroized after processing.
+        token: String,
+    },
 }
 
 /// Custom Debug implementation that redacts password values.
@@ -186,6 +239,24 @@ impl std::fmt::Debug for DaemonCommand {
                 .field("sync_id", sync_id)
                 .finish(),
             DaemonCommand::BackupRootName => write!(f, "BackupRootName"),
+            DaemonCommand::StatusFull => write!(f, "StatusFull"),
+            DaemonCommand::ActivitySince { cursor } => f
+                .debug_struct("ActivitySince")
+                .field("cursor", cursor)
+                .finish(),
+            DaemonCommand::Pause => write!(f, "Pause"),
+            DaemonCommand::Stop => write!(f, "Stop"),
+            DaemonCommand::Resume => write!(f, "Resume"),
+            DaemonCommand::SetupCrypto { hint, .. } => f
+                .debug_struct("SetupCrypto")
+                .field("password", &"[REDACTED]")
+                .field("hint", hint)
+                .finish(),
+            DaemonCommand::AuthBeginWeb => write!(f, "AuthBeginWeb"),
+            DaemonCommand::SetAuthToken { .. } => f
+                .debug_struct("SetAuthToken")
+                .field("token", &"[REDACTED]")
+                .finish(),
         }
     }
 }
@@ -207,6 +278,14 @@ impl std::fmt::Display for DaemonCommand {
             DaemonCommand::BackupList => write!(f, "BackupList"),
             DaemonCommand::BackupStatus { .. } => write!(f, "BackupStatus"),
             DaemonCommand::BackupRootName => write!(f, "BackupRootName"),
+            DaemonCommand::StatusFull => write!(f, "StatusFull"),
+            DaemonCommand::ActivitySince { .. } => write!(f, "ActivitySince"),
+            DaemonCommand::Pause => write!(f, "Pause"),
+            DaemonCommand::Stop => write!(f, "Stop"),
+            DaemonCommand::Resume => write!(f, "Resume"),
+            DaemonCommand::SetupCrypto { .. } => write!(f, "SetupCrypto"),
+            DaemonCommand::AuthBeginWeb => write!(f, "AuthBeginWeb"),
+            DaemonCommand::SetAuthToken { .. } => write!(f, "SetAuthToken"),
         }
     }
 }
@@ -255,6 +334,29 @@ pub enum DaemonResponse {
 
     /// Response to `BackupRootName` - the device backup root folder name.
     BackupRootName(String),
+
+    /// Response to `StatusFull` - a full dashboard snapshot.
+    ///
+    /// Boxed: this is the largest response variant and would otherwise bloat
+    /// every `DaemonResponse` value.
+    StatusFull(Box<DashboardSnapshot>),
+
+    /// Response to `ActivitySince` - new activity entries plus the cursor the
+    /// client should pass on its next poll.
+    Activity {
+        /// Entries newer than the requested cursor.
+        entries: Vec<ActivityEntry>,
+        /// Updated cursor (highest seq returned, or the input cursor).
+        cursor: u64,
+    },
+
+    /// Response to `AuthBeginWeb` - the browser login URL and optional QR code.
+    AuthWeb {
+        /// The login URL to open / display.
+        url: String,
+        /// A pre-rendered QR code for the URL, if generation succeeded.
+        qr: Option<String>,
+    },
 }
 
 impl std::fmt::Display for DaemonResponse {
@@ -294,7 +396,40 @@ impl std::fmt::Display for DaemonResponse {
                 write!(f, "device={}, backups={}", s.device_name, s.backups.len())
             }
             DaemonResponse::BackupRootName(name) => write!(f, "{}", name),
+            DaemonResponse::StatusFull(s) => {
+                write!(
+                    f,
+                    "status={}, authenticated={}, mounted={}",
+                    s.status.status_str,
+                    s.auth_state == crate::wrapper::AuthState::Authenticated,
+                    s.fs_mounted
+                )
+            }
+            DaemonResponse::Activity { entries, cursor } => {
+                write!(f, "{} activity entrie(s), cursor={}", entries.len(), cursor)
+            }
+            DaemonResponse::AuthWeb { url, .. } => write!(f, "{}", url),
         }
+    }
+}
+
+/// Shared daemon state handed to each connection handler.
+///
+/// Bundles the pclsync client with the live activity-log ring buffer so the
+/// IPC server can answer both control commands and the dashboard/activity
+/// polls the TUI makes.
+#[derive(Clone)]
+pub struct DaemonContext {
+    /// The pclsync client (engine owner).
+    pub client: Arc<Mutex<PCloudClient>>,
+    /// Captured file-event activity log (fed by the pclsync event callback).
+    pub activity: Arc<ActivityLog>,
+}
+
+impl DaemonContext {
+    /// Create a context from a client and activity log.
+    pub fn new(client: Arc<Mutex<PCloudClient>>, activity: Arc<ActivityLog>) -> Self {
+        Self { client, activity }
     }
 }
 
@@ -397,7 +532,7 @@ impl DaemonServer {
     /// - Main thread: Accepts connections in non-blocking mode
     /// - Worker threads: Handle individual connections
     /// - Checks for shutdown every 100ms
-    pub fn run(&self, client: Arc<Mutex<PCloudClient>>) -> Result<()> {
+    pub fn run(&self, ctx: DaemonContext) -> Result<()> {
         let listener = self.listener.as_ref().ok_or_else(|| {
             PCloudError::Daemon(DaemonError::Ipc("Server not initialized".to_string()))
         })?;
@@ -418,10 +553,10 @@ impl DaemonServer {
 
             match listener.accept() {
                 Ok((stream, _addr)) => {
-                    let client_clone = client.clone();
+                    let ctx_clone = ctx.clone();
                     // Handle connection in a thread
                     thread::spawn(move || {
-                        if let Err(e) = handle_connection(stream, client_clone) {
+                        if let Err(e) = handle_connection(stream, ctx_clone) {
                             eprintln!("IPC connection error: {}", e);
                         }
                     });
@@ -461,7 +596,7 @@ impl Drop for DaemonServer {
 /// 3. Process command
 /// 4. Write 4-byte little-endian response length
 /// 5. Write bincode-serialized `DaemonResponse`
-fn handle_connection(stream: UnixStream, client: Arc<Mutex<PCloudClient>>) -> Result<()> {
+fn handle_connection(stream: UnixStream, ctx: DaemonContext) -> Result<()> {
     // Set timeouts to prevent hanging on misbehaving clients
     stream
         .set_read_timeout(Some(Duration::from_secs(30)))
@@ -501,7 +636,7 @@ fn handle_connection(stream: UnixStream, client: Arc<Mutex<PCloudClient>>) -> Re
     })?;
 
     // Process command
-    let response = process_command(command, &client);
+    let response = process_command(command, &ctx);
 
     // Serialize response
     let resp_bytes = bincode::serialize(&response)
@@ -534,10 +669,8 @@ fn handle_connection(stream: UnixStream, client: Arc<Mutex<PCloudClient>>) -> Re
 /// - Passwords are immediately converted to `SecurePassword`
 /// - The original `String` is zeroized after conversion
 /// - `SecurePassword` automatically zeroizes memory on drop
-fn process_command(
-    mut command: DaemonCommand,
-    client: &Arc<Mutex<PCloudClient>>,
-) -> DaemonResponse {
+fn process_command(mut command: DaemonCommand, ctx: &DaemonContext) -> DaemonResponse {
+    let client = &ctx.client;
     match command {
         DaemonCommand::Ping => DaemonResponse::Pong,
 
@@ -690,6 +823,138 @@ fn process_command(
             },
             Err(e) => DaemonResponse::Error(format!("Failed to acquire client lock: {}", e)),
         },
+
+        DaemonCommand::StatusFull => match client.lock() {
+            Ok(mut c) => DaemonResponse::StatusFull(Box::new(build_dashboard_snapshot(&mut c))),
+            Err(e) => DaemonResponse::Error(format!("Failed to acquire client lock: {}", e)),
+        },
+
+        DaemonCommand::ActivitySince { cursor } => {
+            let (entries, cursor) = ctx.activity.since(cursor);
+            DaemonResponse::Activity { entries, cursor }
+        }
+
+        DaemonCommand::Pause => match client.lock() {
+            Ok(mut c) => match c.pause() {
+                Ok(()) => DaemonResponse::OkWithMessage("Sync paused".to_string()),
+                Err(e) => DaemonResponse::Error(e.to_string()),
+            },
+            Err(e) => DaemonResponse::Error(format!("Failed to acquire client lock: {}", e)),
+        },
+
+        DaemonCommand::Stop => match client.lock() {
+            Ok(mut c) => match c.stop() {
+                Ok(()) => DaemonResponse::OkWithMessage("Sync stopped".to_string()),
+                Err(e) => DaemonResponse::Error(e.to_string()),
+            },
+            Err(e) => DaemonResponse::Error(format!("Failed to acquire client lock: {}", e)),
+        },
+
+        DaemonCommand::Resume => match client.lock() {
+            Ok(mut c) => match c.resume() {
+                Ok(()) => DaemonResponse::OkWithMessage("Sync resumed".to_string()),
+                Err(e) => DaemonResponse::Error(e.to_string()),
+            },
+            Err(e) => DaemonResponse::Error(format!("Failed to acquire client lock: {}", e)),
+        },
+
+        DaemonCommand::SetupCrypto {
+            ref mut password,
+            ref hint,
+        } => {
+            // Take and immediately secure the password; zeroize the original.
+            let secure_pwd = SecurePassword::new_zeroizing(password.clone());
+            password.zeroize();
+            match client.lock() {
+                Ok(mut c) => {
+                    use secrecy::SecretString;
+                    let secret_pwd = SecretString::from(secure_pwd.expose().to_string());
+                    match c.setup_crypto(&secret_pwd, hint) {
+                        Ok(()) => {
+                            DaemonResponse::OkWithMessage("Crypto set up successfully".to_string())
+                        }
+                        Err(e) => DaemonResponse::Error(e.to_string()),
+                    }
+                }
+                Err(e) => DaemonResponse::Error(format!("Failed to acquire client lock: {}", e)),
+            }
+        }
+
+        DaemonCommand::AuthBeginWeb => {
+            let session_result = match client.lock() {
+                Ok(mut c) => c.initiate_web_login(&crate::wrapper::WebLoginConfig::default()),
+                Err(e) => {
+                    return DaemonResponse::Error(format!("Failed to acquire client lock: {}", e))
+                }
+            };
+            match session_result {
+                Ok(session) => {
+                    let url = session.login_url.clone();
+                    let qr = crate::utils::qrcode::generate_qr_code(&url).ok();
+                    // Wait for completion in the background; on success pclsync
+                    // sets the auth token itself. The client observes via polling
+                    // StatusFull.
+                    let request_id = session.request_id.clone();
+                    thread::spawn(move || {
+                        let _ = crate::wrapper::weblogin::wait_for_web_auth(&request_id);
+                    });
+                    DaemonResponse::AuthWeb { url, qr }
+                }
+                Err(e) => DaemonResponse::Error(e.to_string()),
+            }
+        }
+
+        DaemonCommand::SetAuthToken { ref mut token } => {
+            let secure_token = SecurePassword::new_zeroizing(token.clone());
+            token.zeroize();
+            match client.lock() {
+                Ok(mut c) => {
+                    use secrecy::SecretString;
+                    let secret = SecretString::from(secure_token.expose().to_string());
+                    match c.set_auth_token(&secret, true) {
+                        Ok(()) => DaemonResponse::OkWithMessage(
+                            "Token set, authenticating...".to_string(),
+                        ),
+                        Err(e) => DaemonResponse::Error(e.to_string()),
+                    }
+                }
+                Err(e) => DaemonResponse::Error(format!("Failed to acquire client lock: {}", e)),
+            }
+        }
+    }
+}
+
+/// Build a full dashboard snapshot from the live client state.
+///
+/// Mirrors the per-tick reads the TUI used to perform in-process, so the remote
+/// TUI can copy the result straight into its view state.
+fn build_dashboard_snapshot(c: &mut PCloudClient) -> DashboardSnapshot {
+    // Refresh cached state against the C library so transfer/mount/auth values
+    // are live (the FUSE mount and auth complete asynchronously).
+    c.refresh_all_state();
+    let status = StatusSnapshot::from_pstatus(&c.get_status());
+
+    let crypto_folder_path = if c.is_crypto_started() && c.is_mounted() {
+        c.get_crypto_folder_id()
+            .and_then(|fid| c.get_fs_path_by_folder_id(fid))
+            .map(|p| p.display().to_string())
+    } else {
+        None
+    };
+
+    let (quota_used, quota_total) = c.get_quota();
+
+    DashboardSnapshot {
+        status,
+        auth_state: c.auth_state().clone(),
+        crypto_state: c.crypto_state().clone(),
+        fs_mounted: c.is_mounted(),
+        mountpoint: c.mountpoint().map(|p| p.display().to_string()),
+        account_email: c.get_username(),
+        quota_used,
+        quota_total,
+        account_location: c.get_account_location(),
+        crypto_folder_path,
     }
 }
 
@@ -1128,5 +1393,95 @@ mod tests {
             format!("{}", DaemonCommand::BackupRootName),
             "BackupRootName"
         );
+    }
+
+    // ========================================================================
+    // Dashboard / auth IPC tests (pure-client TUI surface)
+    // ========================================================================
+
+    #[test]
+    fn test_dashboard_command_roundtrip() {
+        let commands = vec![
+            DaemonCommand::StatusFull,
+            DaemonCommand::ActivitySince { cursor: 0 },
+            DaemonCommand::ActivitySince { cursor: 99 },
+            DaemonCommand::Pause,
+            DaemonCommand::Stop,
+            DaemonCommand::Resume,
+            DaemonCommand::SetupCrypto {
+                password: "secret".to_string(),
+                hint: "my hint".to_string(),
+            },
+            DaemonCommand::AuthBeginWeb,
+            DaemonCommand::SetAuthToken {
+                token: "tok".to_string(),
+            },
+        ];
+        for cmd in commands {
+            let bytes = bincode::serialize(&cmd).expect("serialize");
+            let back: DaemonCommand = bincode::deserialize(&bytes).expect("deserialize");
+            assert_eq!(format!("{:?}", cmd), format!("{:?}", back));
+        }
+    }
+
+    #[test]
+    fn test_secret_commands_redacted_in_debug() {
+        let setup = DaemonCommand::SetupCrypto {
+            password: "super_secret".to_string(),
+            hint: "hint".to_string(),
+        };
+        let s = format!("{:?}", setup);
+        assert!(!s.contains("super_secret"));
+        assert!(s.contains("REDACTED"));
+        assert!(s.contains("hint"));
+
+        let tok = DaemonCommand::SetAuthToken {
+            token: "tok_secret".to_string(),
+        };
+        let s = format!("{:?}", tok);
+        assert!(!s.contains("tok_secret"));
+        assert!(s.contains("REDACTED"));
+    }
+
+    #[test]
+    fn test_dashboard_response_roundtrip() {
+        use crate::wrapper::{
+            ActivityEntry, AuthState, CryptoState, DashboardSnapshot, StatusSnapshot,
+        };
+
+        let snapshot = DashboardSnapshot {
+            status: StatusSnapshot::default(),
+            auth_state: AuthState::Authenticated,
+            crypto_state: CryptoState::Started,
+            fs_mounted: true,
+            mountpoint: Some("/home/user/pCloud".to_string()),
+            account_email: Some("user@example.com".to_string()),
+            quota_used: 1234,
+            quota_total: 5678,
+            account_location: Some("US".to_string()),
+            crypto_folder_path: Some("/home/user/pCloud/Crypto Folder".to_string()),
+        };
+
+        let responses = vec![
+            DaemonResponse::StatusFull(Box::new(snapshot)),
+            DaemonResponse::Activity {
+                entries: vec![ActivityEntry {
+                    seq: 1,
+                    timestamp: "00:00:01".to_string(),
+                    description: "downloaded foo".to_string(),
+                    is_error: false,
+                }],
+                cursor: 1,
+            },
+            DaemonResponse::AuthWeb {
+                url: "https://my.pcloud.com/login".to_string(),
+                qr: Some("<qr>".to_string()),
+            },
+        ];
+        for resp in responses {
+            let bytes = bincode::serialize(&resp).expect("serialize");
+            let back: DaemonResponse = bincode::deserialize(&bytes).expect("deserialize");
+            assert_eq!(format!("{:?}", resp), format!("{:?}", back));
+        }
     }
 }
