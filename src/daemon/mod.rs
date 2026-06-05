@@ -80,7 +80,8 @@ pub mod signals;
 
 // Re-export commonly used items from process module
 pub use process::{
-    cleanup_pid_file, daemonize, get_daemon_pid, is_daemon_running, stop_daemon, DaemonConfig,
+    cleanup_pid_file, daemonize, get_daemon_pid, is_daemon_running, stop_daemon, write_pid_file,
+    DaemonConfig,
 };
 
 // Re-export commonly used items from signals module

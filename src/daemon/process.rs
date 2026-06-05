@@ -201,6 +201,35 @@ pub fn get_daemon_pid(config: &DaemonConfig) -> Option<i32> {
         .and_then(|s| s.trim().parse().ok())
 }
 
+/// Write the current process's PID to the PID file.
+///
+/// Used by foreground (non-daemonized) mode, where the `daemonize` crate does
+/// not run, so `stop`/`status`/`is_daemon_running` still have a PID file to
+/// find. The directory is created if needed. Call [`cleanup_pid_file`] on exit.
+///
+/// # Arguments
+///
+/// * `config` - Daemon configuration containing PID file path
+pub fn write_pid_file(config: &DaemonConfig) -> Result<()> {
+    if let Some(parent) = config.pid_file.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent).map_err(|e| {
+                PCloudError::Daemon(DaemonError::PidFile(format!(
+                    "failed to create PID file directory: {}",
+                    e
+                )))
+            })?;
+        }
+    }
+    let pid = unsafe { libc::getpid() };
+    fs::write(&config.pid_file, format!("{}\n", pid)).map_err(|e| {
+        PCloudError::Daemon(DaemonError::PidFile(format!(
+            "failed to write PID file: {}",
+            e
+        )))
+    })
+}
+
 /// Remove the PID file.
 ///
 /// This should be called during daemon shutdown to clean up.

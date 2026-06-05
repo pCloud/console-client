@@ -79,6 +79,14 @@ src/
 |   +-- widgets/         # One file per visual component
 |                        #   (see src/tui/CLAUDE.md for the full guide)
 |
+|-- service/             # Boot/login autostart service management
+|   |-- mod.rs           # ServiceBackend trait, init detection, select_backend
+|   |-- systemd.rs       # user + system unit
+|   |-- launchd.rs       # macOS LaunchAgent / LaunchDaemon
+|   |-- openrc.rs        # OpenRC init script
+|   |-- runit.rs         # runit service dir
+|   +-- fallback.rs      # XDG autostart + cron @reboot
+|
 |-- security/            # Security utilities
 |   |-- mod.rs           # Re-exports
 |   +-- password.rs      # SecurePassword with zeroization
@@ -536,15 +544,29 @@ pcloud-cli                          # bare invocation → TUI dashboard
 pcloud-cli auth   login [--token TOKEN] | logout | status | unlink [--yes]
 pcloud-cli mount  [PATH] [--token TOKEN]      # foreground mount, blocks
 pcloud-cli start  [PATH] [--token TOKEN]      # background daemon mount
+                  [--foreground]              #   run in-process for a supervisor
                   [--allow-unauthenticated]   #   (hidden) start engine with no creds
 pcloud-cli stop                               # graceful daemon shutdown
 pcloud-cli status                             # daemon + auth + crypto state
 pcloud-cli crypto start [--password-file FILE] | stop | status
 pcloud-cli backup add <PATH> | list | remove <ID>
                  | stop-device | status [<ID>] | root-name
+pcloud-cli service install [PATH] [--user|--system] [--boot] [--no-start]
+                 | uninstall | restart | status   [--user|--system]
 pcloud-cli tui                                # explicit TUI launcher
 pcloud-cli doctor                             # env / dependency diagnostics
 ```
+
+`start --foreground` runs the engine + IPC server in the current process (no
+double-fork) for service supervisors; it relies on saved credentials and stops
+on SIGTERM/SIGINT.
+
+`service` installs/removes an autostart service that runs
+`start --foreground <mountpoint>` (so the TUI/CLI attach to it over IPC). The
+backend is chosen by `(platform, init system, scope, trigger)` — systemd
+user/system unit, macOS launchd LaunchAgent/LaunchDaemon, OpenRC, runit, or a
+per-user XDG-autostart (login) / cron `@reboot` (boot) fallback. `--user` (the
+default) works on every platform. See `src/service/`.
 
 ### Daemon auto-start
 

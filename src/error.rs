@@ -59,6 +59,10 @@ pub enum PCloudError {
     #[error("Not supported: {0}")]
     NotSupported(String),
 
+    /// Service (boot/login autostart) management error
+    #[error("Service error: {0}")]
+    Service(String),
+
     /// C string conversion error (null byte in string)
     #[error("C string error: {0}")]
     CString(#[from] std::ffi::NulError),

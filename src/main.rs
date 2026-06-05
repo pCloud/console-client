@@ -30,7 +30,7 @@ use secrecy::{ExposeSecret, SecretString};
 use console_client::cli::{
     print_cli_auth_help, prompt_auth_choice, prompt_confirm, prompt_token, resolve_mountpoint,
     AuthArgs, AuthChoice, AuthOp, BackupArgs, BackupOp, Cli, Command, CryptoArgs, CryptoOp,
-    MountArgs, StartArgs,
+    MountArgs, ServiceArgs, ServiceOp, StartArgs,
 };
 use console_client::daemon::{
     is_daemon_running, DaemonClient, DaemonCommand, DaemonConfig, DaemonResponse,
@@ -88,6 +88,8 @@ fn run(cli: Cli) -> Result<()> {
         Some(Command::Crypto(CryptoArgs { op: None })) => print_subcommand_help("crypto"),
         Some(Command::Backup(BackupArgs { op: Some(op) })) => run_backup_subcommand(op),
         Some(Command::Backup(BackupArgs { op: None })) => print_subcommand_help("backup"),
+        Some(Command::Service(ServiceArgs { op: Some(op) })) => run_service_subcommand(op),
+        Some(Command::Service(ServiceArgs { op: None })) => print_subcommand_help("service"),
     }
 }
 
@@ -302,20 +304,35 @@ fn run_start_subcommand(args: StartArgs) -> Result<()> {
     // ONLY in the daemon child, after the fork, and any interactive login is run
     // here in a short-lived subprocess (which fully releases the DB on exit)
     // BEFORE we daemonize.
-    if deferred_token.is_none() && !args.allow_unauthenticated {
+    // Interactive pre-fork login only makes sense when daemonizing with a
+    // controlling terminal. In foreground mode (a supervisor like systemd owns
+    // us) — as with `--allow-unauthenticated` — we rely on saved credentials or
+    // IPC-driven login instead.
+    if deferred_token.is_none() && !args.allow_unauthenticated && !args.foreground {
         ensure_authenticated_before_start()?;
     }
 
     let mountpoint = resolve_mountpoint(args.path.as_deref());
-    println!();
-    print_status(StatusIndicator::Info, "Starting pCloud daemon...");
-    println!("Mountpoint:   {}", mountpoint.display());
-    println!("PID file:     {}", config.pid_file.display());
-    println!("Socket path:  {}", config.socket_path().display());
 
-    daemonize(&config)?;
+    if args.foreground {
+        // Supervised foreground mode: do NOT fork. Write the PID file ourselves
+        // so `stop`/`status` still work. With no fork at all, the pclsync init
+        // below is trivially fork-safe.
+        print_status(
+            StatusIndicator::Info,
+            &format!("Starting pCloud (foreground) at {}", mountpoint.display()),
+        );
+        console_client::daemon::write_pid_file(&config)?;
+    } else {
+        println!();
+        print_status(StatusIndicator::Info, "Starting pCloud daemon...");
+        println!("Mountpoint:   {}", mountpoint.display());
+        println!("PID file:     {}", config.pid_file.display());
+        println!("Socket path:  {}", config.socket_path().display());
+        daemonize(&config)?;
+    }
 
-    // -- We are now running in the daemon child process (post double-fork). --
+    // -- Daemon process (the daemonized child, or this process in foreground). --
 
     setup_daemon_signals()?;
 
@@ -590,6 +607,126 @@ fn run_tui_mode() -> Result<()> {
 
     let cli_for_tui = Cli::default();
     console_client::tui::run(daemon_client, &cli_for_tui)
+}
+
+// ============================================================================
+// service (boot / login autostart)
+// ============================================================================
+
+fn run_service_subcommand(op: ServiceOp) -> Result<()> {
+    use console_client::service::{self, Scope, ServiceConfig, Trigger};
+
+    let exe = std::env::current_exe().map_err(PCloudError::Io)?;
+    let scope_of = |system: bool| if system { Scope::System } else { Scope::User };
+    let scope_label = |s: Scope| match s {
+        Scope::User => "user",
+        Scope::System => "system",
+    };
+
+    match op {
+        ServiceOp::Install {
+            path,
+            user: _,
+            system,
+            boot,
+            no_start,
+        } => {
+            let scope = scope_of(system);
+            let trigger = if boot { Trigger::Boot } else { Trigger::Login };
+            let cfg = ServiceConfig {
+                scope,
+                trigger,
+                mountpoint: resolve_mountpoint(path.as_deref()),
+                exe,
+                start_now: !no_start,
+            };
+
+            // The service authenticates from saved credentials; warn (do not
+            // fail) if the user has not logged in yet.
+            if !has_saved_credentials(&cfg.exe) {
+                print_status(
+                    StatusIndicator::Warning,
+                    "No saved credentials found. Run `pcloud-cli auth login` so the \
+                     service can authenticate (or it will idle until you log in via the TUI).",
+                );
+            }
+
+            let backend = service::install(&cfg)?;
+            print_status(
+                StatusIndicator::Success,
+                &format!(
+                    "Installed {} {} service (mount {}, starts on {}).",
+                    backend,
+                    scope_label(scope),
+                    cfg.mountpoint.display(),
+                    if trigger == Trigger::Boot {
+                        "boot"
+                    } else {
+                        "login"
+                    },
+                ),
+            );
+            if !cfg.start_now {
+                print_status(
+                    StatusIndicator::Info,
+                    "Enabled but not started now (--no-start).",
+                );
+            }
+            Ok(())
+        }
+        ServiceOp::Uninstall { system, .. } => {
+            let cfg = ServiceConfig {
+                scope: scope_of(system),
+                trigger: Trigger::Login,
+                mountpoint: resolve_mountpoint(None),
+                exe,
+                start_now: false,
+            };
+            let backend = service::uninstall(&cfg)?;
+            print_status(
+                StatusIndicator::Success,
+                &format!("Removed {} service.", backend),
+            );
+            Ok(())
+        }
+        ServiceOp::Restart { system, .. } => {
+            let cfg = ServiceConfig {
+                scope: scope_of(system),
+                trigger: Trigger::Login,
+                mountpoint: resolve_mountpoint(None),
+                exe,
+                start_now: true,
+            };
+            let backend = service::restart(&cfg)?;
+            print_status(
+                StatusIndicator::Success,
+                &format!("Restarted {} service.", backend),
+            );
+            Ok(())
+        }
+        ServiceOp::Status { system, .. } => {
+            let cfg = ServiceConfig {
+                scope: scope_of(system),
+                trigger: Trigger::Login,
+                mountpoint: resolve_mountpoint(None),
+                exe,
+                start_now: false,
+            };
+            let (backend, line) = service::status(&cfg)?;
+            println!("{} service: {}", backend, line);
+            Ok(())
+        }
+    }
+}
+
+/// Best-effort check (via an `auth status` subprocess) of whether credentials
+/// are already saved, used only to print an install-time warning.
+fn has_saved_credentials(exe: &Path) -> bool {
+    std::process::Command::new(exe)
+        .args(["auth", "status"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains("Logged in"))
+        .unwrap_or(false)
 }
 
 // ============================================================================

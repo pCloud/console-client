@@ -107,6 +107,9 @@ pub enum Command {
     /// Manage pCloud backups for the current device.
     Backup(BackupArgs),
 
+    /// Install / remove a service that starts pCloud on boot or login.
+    Service(ServiceArgs),
+
     /// Launch the interactive TUI dashboard (same as no-argument invocation).
     Tui,
 
@@ -192,6 +195,13 @@ pub struct StartArgs {
     /// run). Hidden: not part of the user-facing surface.
     #[arg(long = "allow-unauthenticated", hide = true)]
     pub allow_unauthenticated: bool,
+
+    /// Run in the foreground instead of daemonizing (for service supervisors
+    /// like systemd `Type=simple`, launchd, runit). The engine and IPC server
+    /// run in this process until it receives SIGTERM/SIGINT. Relies on saved
+    /// credentials; login can be completed later over IPC.
+    #[arg(long = "foreground")]
+    pub foreground: bool,
 }
 
 // ============================================================================
@@ -265,6 +275,66 @@ pub enum BackupOp {
     },
     /// Print the backup root folder name for this device.
     RootName,
+}
+
+// ============================================================================
+// service (boot / login autostart)
+// ============================================================================
+
+/// Arguments for the `service` subcommand group.
+///
+/// Bare `pcloud-cli service` prints the group's help and exits cleanly.
+#[derive(Args, Debug, Clone)]
+pub struct ServiceArgs {
+    #[command(subcommand)]
+    pub op: Option<ServiceOp>,
+}
+
+/// Service management operations. Each selects the scope with `--user`
+/// (default) or `--system`.
+#[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
+pub enum ServiceOp {
+    /// Install and enable a service that starts pCloud on boot or login.
+    Install {
+        /// Mount path for the service. Defaults like `start`
+        /// (`$PCLOUD_MOUNTPOINT` or `~/pCloud`).
+        #[arg(value_name = "PATH")]
+        path: Option<PathBuf>,
+        /// Install as a per-user service for the calling user (default).
+        #[arg(long, conflicts_with = "system")]
+        user: bool,
+        /// Install as a system-wide service (usually needs root).
+        #[arg(long)]
+        system: bool,
+        /// Start at boot without waiting for an interactive login (systemd:
+        /// enables lingering; non-systemd user hosts: a cron `@reboot` entry).
+        #[arg(long)]
+        boot: bool,
+        /// Install/enable the service but do not start it right now.
+        #[arg(long = "no-start")]
+        no_start: bool,
+    },
+    /// Stop, disable, and remove the service.
+    Uninstall {
+        #[arg(long, conflicts_with = "system")]
+        user: bool,
+        #[arg(long)]
+        system: bool,
+    },
+    /// Restart the service.
+    Restart {
+        #[arg(long, conflicts_with = "system")]
+        user: bool,
+        #[arg(long)]
+        system: bool,
+    },
+    /// Show the service status.
+    Status {
+        #[arg(long, conflicts_with = "system")]
+        user: bool,
+        #[arg(long)]
+        system: bool,
+    },
 }
 
 // ============================================================================
