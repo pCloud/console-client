@@ -199,7 +199,7 @@ cargo install cargo-generate-rpm && cargo build --release && cargo generate-rpm
 cd pkg/arch && makepkg -si
 ```
 
-All packages install the binary to `/usr/bin/pcloud` and include the `LICENSE` file.
+All packages install the binary to `/usr/bin/pcloud-cli` and include the `LICENSE` file.
 Runtime dependencies vary by format but cover: FUSE, OpenSSL/TLS, zlib, and udev/systemd-libs.
 SQLite is not a runtime dependency — it is statically linked from the vendored amalgamation.
 

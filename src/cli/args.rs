@@ -16,12 +16,14 @@
 //! pcloud-cli backup add|list|remove|status|stop-device|root-name
 //! pcloud-cli tui
 //! pcloud-cli doctor
+//! pcloud-cli completions <SHELL>
 //! ```
 
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 use clap::{Args, Parser, Subcommand};
+use clap_complete::Shell;
 
 /// Build a multi-line version string including pclsync info.
 fn build_version_string() -> String {
@@ -115,6 +117,16 @@ pub enum Command {
 
     /// Run dependency and environment diagnostics.
     Doctor,
+
+    /// Print a shell completion script for the given shell to stdout.
+    ///
+    /// Pipe the output into your shell's completion directory, e.g.
+    /// `pcloud-cli completions bash | sudo tee /etc/bash_completion.d/pcloud-cli`.
+    Completions {
+        /// Shell to generate the completion script for.
+        #[arg(value_name = "SHELL")]
+        shell: Shell,
+    },
 }
 
 // ============================================================================
@@ -418,6 +430,21 @@ mod tests {
     fn doctor_subcommand_parses() {
         let cli = Cli::parse_from_args(["pcloud-cli", "doctor"]);
         assert!(matches!(cli.command, Some(Command::Doctor)));
+    }
+
+    #[test]
+    fn completions_subcommand_parses() {
+        let cli = Cli::parse_from_args(["pcloud-cli", "completions", "bash"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Completions { shell: Shell::Bash })
+        ));
+    }
+
+    #[test]
+    fn completions_rejects_unknown_shell() {
+        let res = Cli::try_parse_from_args(["pcloud-cli", "completions", "bogus-shell"]);
+        assert!(res.is_err());
     }
 
     #[test]

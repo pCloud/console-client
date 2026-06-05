@@ -78,6 +78,7 @@ fn run(cli: Cli) -> Result<()> {
     match cli.command {
         None | Some(Command::Tui) => run_tui_mode(),
         Some(Command::Doctor) => console_client::utils::deps::run_doctor(),
+        Some(Command::Completions { shell }) => run_completions(shell),
         Some(Command::Auth(AuthArgs { op: Some(op) })) => run_auth_subcommand(op),
         Some(Command::Auth(AuthArgs { op: None })) => print_subcommand_help("auth"),
         Some(Command::Mount(args)) => run_mount_subcommand(args),
@@ -109,6 +110,29 @@ fn print_subcommand_help(name: &str) -> Result<()> {
         println!();
     }
     Ok(())
+}
+
+/// Print a clap-generated completion script for `shell` to stdout.
+///
+/// Keyed to the binary's clap name (`pcloud-cli`), which matches the installed
+/// binary in all packaging formats, so the emitted script works as-is.
+///
+/// We generate into an in-memory buffer (whose writes are infallible) rather
+/// than handing `generate` the real stdout: `clap_complete::generate` panics on
+/// any write error, so a reader that closes the pipe early (e.g. `… | head`)
+/// would otherwise abort with a `BrokenPipe` panic. Writing the finished buffer
+/// ourselves lets us treat a broken pipe as a clean exit, matching how ordinary
+/// stream tools behave when truncated.
+fn run_completions(shell: clap_complete::Shell) -> Result<()> {
+    let mut cmd = Cli::command();
+    let bin_name = cmd.get_name().to_string();
+    let mut buf = Vec::new();
+    clap_complete::generate(shell, &mut cmd, bin_name, &mut buf);
+    match std::io::stdout().write_all(&buf) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        Err(e) => Err(e.into()),
+    }
 }
 
 // ============================================================================
