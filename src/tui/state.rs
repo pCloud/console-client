@@ -29,14 +29,16 @@ impl Panel {
     pub fn next(&self) -> Self {
         match self {
             Panel::Crypto => Panel::Transfers,
-            Panel::Transfers => Panel::ActivityLog,
+            Panel::Transfers => Panel::Crypto,
+            // Activity log is hidden from the dashboard, so it's not part of the
+            // Tab cycle; map it back to a visible panel defensively.
             Panel::ActivityLog => Panel::Crypto,
         }
     }
 
     pub fn prev(&self) -> Self {
         match self {
-            Panel::Crypto => Panel::ActivityLog,
+            Panel::Crypto => Panel::Transfers,
             Panel::Transfers => Panel::Crypto,
             Panel::ActivityLog => Panel::Transfers,
         }

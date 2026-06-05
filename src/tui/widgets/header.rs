@@ -33,22 +33,11 @@ pub fn render(frame: &mut Frame, state: &TuiState, area: Rect) {
         "--".to_string()
     };
 
-    let status_msg_span = if let Some((ref msg, ref kind)) = state.status_message {
-        let style = match kind {
-            crate::tui::state::StatusMessageKind::Success => theme::success_text(),
-            crate::tui::state::StatusMessageKind::Error => theme::error_text(),
-        };
-        Span::styled(format!("  {}", msg), style)
-    } else {
-        Span::raw("")
-    };
-
     let status_line = Line::from(vec![
         label_span("Status:"),
         Span::styled(status_icon(state.status.status), status_style),
         Span::raw(" "),
         Span::styled(&state.status.status_str, status_style),
-        status_msg_span,
     ]);
 
     let account_line = Line::from(vec![

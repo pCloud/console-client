@@ -76,13 +76,11 @@ fn render_dashboard(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rec
     let chunks = Layout::vertical([
         Constraint::Length(7), // Header (5 content lines + 2 borders)
         Constraint::Length(3), // Crypto
-        Constraint::Length(6), // Transfers (2 label lines + 2 gauge bars + borders)
-        Constraint::Fill(1),   // Activity log
+        Constraint::Fill(1),   // Transfers (2 label lines + 2 gauge bars + borders)
     ])
     .split(area);
 
     widgets::header::render(frame, state, chunks[0]);
     widgets::crypto_panel::render(frame, state, chunks[1]);
     widgets::transfer::render(frame, state, chunks[2]);
-    widgets::activity_log::render(frame, state, chunks[3]);
 }

@@ -6,6 +6,10 @@ use ratatui::Frame;
 use crate::tui::state::{Panel, TuiState};
 use crate::tui::theme;
 
+// Temporarily not rendered: the activity log panel is hidden from the dashboard
+// layout until the underlying event stream is wired up (see ui.rs). Kept here so
+// re-enabling it is a one-line change in `render_dashboard`.
+#[allow(dead_code)]
 pub fn render(frame: &mut Frame, state: &mut TuiState, area: Rect) {
     let border_style = if state.active_panel == Panel::ActivityLog {
         theme::focused_border()
