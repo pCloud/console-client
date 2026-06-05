@@ -283,40 +283,28 @@ fn run_start_subcommand(args: StartArgs) -> Result<()> {
         return Err(PCloudError::Daemon(DaemonError::AlreadyRunning));
     }
 
-    print_status(StatusIndicator::Info, "Initializing pCloud client...");
-    let client = PCloudClient::init()?;
-
+    // Resolve any token to apply once the engine is up (CLI flag or env).
+    // Reading the token does not touch pclsync, so it is safe before we fork.
     let env_token = resolve_auth_token()?;
-
-    // Pre-fork: only run the interactive auth flow if absolutely necessary
-    // (the controlling terminal is gone after fork). For CLI / env-supplied
-    // tokens we DEFER `set_auth_token` until after the fork — `psync_set_auth`
-    // touches the SQLite settings table, and SQLite handles are not fork-safe.
     let deferred_token: Option<SecretString> = if let Some(t) = args.token.as_deref() {
         Some(SecretString::from(t.to_string()))
-    } else if let Some(t) = env_token {
-        Some(t)
     } else {
-        let guard = client
-            .lock()
-            .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
-        let has_creds = guard.has_saved_credentials();
-        drop(guard);
-        if !has_creds && !args.allow_unauthenticated {
-            print_status(
-                StatusIndicator::Info,
-                "Authentication required before daemon can start",
-            );
-            handle_interactive_auth(&client, /* save = */ true)?;
-        }
-        // When `allow_unauthenticated` is set we start the engine with no
-        // credentials; it idles in LOGIN_REQUIRED until a client drives login
-        // over IPC (AuthBeginWeb / SetAuthToken).
-        None
+        env_token
     };
-    // Whether the deferred token came from a CLI flag (persist) or from the env
-    // (ephemeral, never persisted). `args.token` having a value wins.
+    // CLI-flag tokens are persisted; env-sourced tokens are ephemeral.
     let save_deferred_token = args.token.is_some();
+
+    // Fork-safety: `psync_init()` spawns pclsync worker threads that continuously
+    // hold the SQL lock (the upload-status monitor polls the DB every 2s). We must
+    // NOT initialize pclsync before `daemonize()` forks — a fork landing while one
+    // of those threads holds the (process-private) SQL rwlock orphans the lock and
+    // deadlocks the first SQL write (`set_fs_root`). So pclsync is initialized
+    // ONLY in the daemon child, after the fork, and any interactive login is run
+    // here in a short-lived subprocess (which fully releases the DB on exit)
+    // BEFORE we daemonize.
+    if deferred_token.is_none() && !args.allow_unauthenticated {
+        ensure_authenticated_before_start()?;
+    }
 
     let mountpoint = resolve_mountpoint(args.path.as_deref());
     println!();
@@ -327,9 +315,13 @@ fn run_start_subcommand(args: StartArgs) -> Result<()> {
 
     daemonize(&config)?;
 
-    // -- We are now running in the daemon child process. --
+    // -- We are now running in the daemon child process (post double-fork). --
 
     setup_daemon_signals()?;
+
+    // Initialize pclsync now, AFTER the fork, so no engine threads ever crossed
+    // it (see the fork-safety note above).
+    let client = PCloudClient::init()?;
 
     // Capture the live file-event stream into a ring buffer so IPC clients (the
     // TUI) can poll recent activity. Status itself is polled on demand via
@@ -345,8 +337,9 @@ fn run_start_subcommand(args: StartArgs) -> Result<()> {
         });
     }
 
-    // Apply the deferred CLI/env token post-fork so the SQLite write happens
-    // in the child's address space.
+    // Apply the deferred CLI/env token. The engine otherwise authenticates from
+    // saved credentials on init; with neither it idles in LOGIN_REQUIRED until a
+    // client drives login over IPC (AuthBeginWeb / SetAuthToken).
     if let Some(ref token) = deferred_token {
         let mut guard = client
             .lock()
@@ -390,6 +383,44 @@ fn run_start_subcommand(args: StartArgs) -> Result<()> {
 
     let _ = ipc_thread.join();
     cleanup_pid_file(&config);
+    Ok(())
+}
+
+/// Ensure the user is authenticated before the daemon starts, WITHOUT
+/// initializing pclsync in this (about-to-fork) process.
+///
+/// pclsync is not fork-safe once initialized (see the fork-safety note in
+/// `run_start_subcommand`), so the credential check and any interactive login
+/// run in short-lived `auth` subprocesses. Each fully releases the SQLite DB on
+/// exit, leaving the daemon free to initialize cleanly after `daemonize()`.
+fn ensure_authenticated_before_start() -> Result<()> {
+    let exe = std::env::current_exe().map_err(PCloudError::Io)?;
+
+    // Already authenticated? `auth status` initializes pclsync, checks the saved
+    // credentials, prints its verdict, and exits.
+    let output = std::process::Command::new(&exe)
+        .args(["auth", "status"])
+        .output()
+        .map_err(PCloudError::Io)?;
+    if String::from_utf8_lossy(&output.stdout).contains("Logged in") {
+        return Ok(());
+    }
+
+    // Not authenticated: run the interactive login flow in a subprocess that
+    // inherits this terminal and exits (releasing the DB) before we daemonize.
+    print_status(
+        StatusIndicator::Info,
+        "Authentication required before daemon can start",
+    );
+    let status = std::process::Command::new(&exe)
+        .args(["auth", "login"])
+        .status()
+        .map_err(PCloudError::Io)?;
+    if !status.success() {
+        return Err(PCloudError::Auth(AuthError::Other(
+            "Authentication was not completed".to_string(),
+        )));
+    }
     Ok(())
 }
 
