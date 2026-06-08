@@ -246,6 +246,7 @@ The daemon creates:
 | `pcloud-cli backup stop-device`        | Stop all backups on the current device       |
 | `pcloud-cli backup root-name`          | Print the backup root folder name            |
 | `pcloud-cli doctor`                    | Dependency and environment diagnostics       |
+| `pcloud-cli completions <SHELL>`       | Print a shell completion script to stdout    |
 
 ### Environment variables
 
@@ -259,6 +260,114 @@ The daemon creates:
 
 Direct env vars take priority over `_FILE` variants. Env-sourced tokens are
 ephemeral and never persist to the local database.
+
+### Shell completions
+
+`pcloud-cli completions <SHELL>` prints a completion script to **stdout** for the
+given shell. Supported values are `bash`, `zsh`, and `fish` (the app targets
+Linux and macOS, so PowerShell and Elvish are intentionally not offered).
+
+```bash
+# Preview the generated script
+pcloud-cli completions bash
+```
+
+Completions include each subcommand's description (e.g. `backup  (Manage pCloud
+backups for the current device)`) in all three shells, and complete arguments by
+type — directory paths for `mount`/`start`/`backup add`, files for
+`crypto start --password-file`, and nothing spurious for numeric ids.
+
+The generated script completes the command **`pcloud-cli`**, so that binary must
+be reachable by that name on your `PATH` (e.g. after `cargo install --path .`,
+`sudo cp target/release/pcloud-cli /usr/local/bin/`, or installing a package).
+This matters when testing a local build: invoking it by a relative path such as
+`./target/release/pcloud-cli` will not trigger completion. The bash script also
+calls back into the binary at completion time, so `pcloud-cli` must be runnable
+from your `PATH`.
+
+> **Packages already do this for you.** The `.deb`, `.rpm`, and Arch packages can
+> ship completion files; the steps below are for source builds or manual setup.
+
+#### Linux
+
+**Bash** — load for the current shell, or install persistently:
+
+```bash
+# Current shell only (quick test)
+source <(pcloud-cli completions bash)
+
+# Per-user (loaded automatically by bash-completion)
+mkdir -p ~/.local/share/bash-completion/completions
+pcloud-cli completions bash > ~/.local/share/bash-completion/completions/pcloud-cli
+
+# System-wide (all users)
+pcloud-cli completions bash | sudo tee /etc/bash_completion.d/pcloud-cli > /dev/null
+```
+
+**Zsh** — write the script to a directory on your `fpath`, then ensure `compinit`
+runs:
+
+```bash
+mkdir -p ~/.zfunc
+pcloud-cli completions zsh > ~/.zfunc/_pcloud-cli
+
+# Add to ~/.zshrc (before compinit) if not already present:
+#   fpath=(~/.zfunc $fpath)
+#   autoload -Uz compinit && compinit
+exec zsh   # reload
+```
+
+**Fish** — fish autoloads from its completions directory:
+
+```bash
+mkdir -p ~/.config/fish/completions
+pcloud-cli completions fish > ~/.config/fish/completions/pcloud-cli.fish
+```
+
+#### macOS
+
+The default shell on macOS is **zsh**.
+
+**Zsh** — install into the Homebrew `site-functions` directory (already on
+`fpath` for Homebrew zsh setups):
+
+```bash
+pcloud-cli completions zsh > "$(brew --prefix)/share/zsh/site-functions/_pcloud-cli"
+exec zsh
+```
+
+If you don't use Homebrew, write to a personal dir instead and add it to `fpath`
+as shown in the Linux/Zsh steps above:
+
+```bash
+mkdir -p ~/.zfunc
+pcloud-cli completions zsh > ~/.zfunc/_pcloud-cli
+```
+
+**Bash** — macOS ships an old Bash, so install Homebrew's `bash-completion@2`
+first, then drop the script into its completions directory:
+
+```bash
+brew install bash-completion@2
+pcloud-cli completions bash > "$(brew --prefix)/etc/bash_completion.d/pcloud-cli"
+```
+
+Make sure your `~/.bash_profile` sources bash-completion:
+
+```bash
+[[ -r "$(brew --prefix)/etc/profile.d/bash_completion.sh" ]] && \
+  . "$(brew --prefix)/etc/profile.d/bash_completion.sh"
+```
+
+**Fish**:
+
+```bash
+mkdir -p ~/.config/fish/completions
+pcloud-cli completions fish > ~/.config/fish/completions/pcloud-cli.fish
+```
+
+After installing, restart the shell (or `exec $SHELL`) and type `pcloud-cli <TAB>`
+to verify subcommands and flags complete.
 
 ## Architecture
 

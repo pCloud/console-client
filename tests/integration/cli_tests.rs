@@ -349,3 +349,119 @@ fn tui_help_succeeds() {
     let mut cmd = pcloud_cmd();
     cmd.args(["tui", "--help"]).assert().success();
 }
+
+// ============================================================================
+// shell completions
+// ============================================================================
+
+#[test]
+fn completions_supports_bash_zsh_fish() {
+    for shell in ["bash", "zsh", "fish"] {
+        let mut cmd = pcloud_cmd();
+        cmd.args(["completions", shell])
+            .assert()
+            .success()
+            .stdout(predicate::str::is_empty().not());
+    }
+}
+
+#[test]
+fn completions_rejects_unsupported_shells() {
+    // The app targets Linux/macOS only; PowerShell and Elvish are not offered.
+    for shell in ["powershell", "elvish"] {
+        let mut cmd = pcloud_cmd();
+        cmd.args(["completions", shell]).assert().failure();
+    }
+}
+
+#[test]
+fn completions_bash_emits_dynamic_callback_script() {
+    // The bash script must register a completion function and call back into the
+    // hidden `__complete` subcommand (the cobra-style dynamic integration).
+    let mut cmd = pcloud_cmd();
+    cmd.args(["completions", "bash"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("complete -F"))
+        .stdout(predicate::str::contains("__complete"))
+        .stdout(predicate::str::contains("COMPREPLY"));
+}
+
+/// Regression guard for the `clap_complete` `unstable-dynamic` engine: the hidden
+/// `__complete` callback must keep emitting `value<TAB>description` lines, since
+/// the bash completion's descriptions depend on it. A breaking upgrade to the
+/// unstable API would surface here rather than only in manual shell testing.
+#[test]
+fn complete_callback_emits_descriptions_for_subcommands() {
+    let mut cmd = pcloud_cmd();
+    let output = cmd
+        .args(["__complete", "--index", "1", "--", "pcloud-cli", ""])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let stdout = String::from_utf8(output).expect("utf-8 completion output");
+
+    // Every top-level subcommand should appear with its tab-separated description.
+    for (value, description) in [
+        ("backup", "Manage pCloud backups for the current device"),
+        ("crypto", "Manage the Crypto folder"),
+        ("mount", "Mount pCloud as a FUSE filesystem"),
+    ] {
+        let line = stdout
+            .lines()
+            .find(|l| l.starts_with(&format!("{value}\t")))
+            .unwrap_or_else(|| panic!("missing completion candidate for {value:?}\n{stdout}"));
+        assert!(
+            line.contains(description),
+            "candidate {value:?} missing description {description:?}: {line:?}"
+        );
+    }
+}
+
+#[test]
+fn complete_callback_honors_value_hints() {
+    use std::fs;
+
+    // A directory the path-typed args should surface, and a file they should not
+    // (directory hints only offer directories).
+    let dir = tempfile::tempdir().expect("tempdir");
+    fs::create_dir(dir.path().join("zzz_sentinel_dir")).expect("mkdir sentinel");
+    fs::write(dir.path().join("zzz_sentinel_file"), b"x").expect("write file");
+
+    // `backup add <PATH>` (DirPath) → the sentinel directory shows up.
+    let mut cmd = pcloud_cmd();
+    cmd.current_dir(dir.path())
+        .args([
+            "__complete",
+            "--index",
+            "3",
+            "--",
+            "pcloud-cli",
+            "backup",
+            "add",
+            "",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("zzz_sentinel_dir"))
+        .stdout(predicate::str::contains("zzz_sentinel_file").not());
+
+    // `backup remove <ID>` (numeric, ValueHint::Other) → no filesystem listing.
+    let mut cmd = pcloud_cmd();
+    cmd.current_dir(dir.path())
+        .args([
+            "__complete",
+            "--index",
+            "3",
+            "--",
+            "pcloud-cli",
+            "backup",
+            "remove",
+            "",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("zzz_sentinel").not());
+}

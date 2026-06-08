@@ -29,8 +29,8 @@ use secrecy::{ExposeSecret, SecretString};
 
 use console_client::cli::{
     print_cli_auth_help, prompt_auth_choice, prompt_confirm, prompt_token, resolve_mountpoint,
-    AuthArgs, AuthChoice, AuthOp, BackupArgs, BackupOp, Cli, Command, CryptoArgs, CryptoOp,
-    MountArgs, ServiceArgs, ServiceOp, StartArgs,
+    AuthArgs, AuthChoice, AuthOp, BackupArgs, BackupOp, Cli, Command, CompleteArgs,
+    CompletionShell, CryptoArgs, CryptoOp, MountArgs, ServiceArgs, ServiceOp, StartArgs,
 };
 use console_client::daemon::{
     is_daemon_running, DaemonClient, DaemonCommand, DaemonConfig, DaemonResponse,
@@ -79,6 +79,7 @@ fn run(cli: Cli) -> Result<()> {
         None | Some(Command::Tui) => run_tui_mode(),
         Some(Command::Doctor) => console_client::utils::deps::run_doctor(),
         Some(Command::Completions { shell }) => run_completions(shell),
+        Some(Command::Complete(args)) => run_complete(args),
         Some(Command::Auth(AuthArgs { op: Some(op) })) => run_auth_subcommand(op),
         Some(Command::Auth(AuthArgs { op: None })) => print_subcommand_help("auth"),
         Some(Command::Mount(args)) => run_mount_subcommand(args),
@@ -112,10 +113,15 @@ fn print_subcommand_help(name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Print a clap-generated completion script for `shell` to stdout.
+/// Print a completion script for `shell` to stdout.
 ///
 /// Keyed to the binary's clap name (`pcloud-cli`), which matches the installed
 /// binary in all packaging formats, so the emitted script works as-is.
+///
+/// zsh and fish use `clap_complete`'s static generator (both render per-command
+/// descriptions natively). bash uses our own description-aware script
+/// ([`write_bash_completion`]) because clap_complete emits bare names for bash;
+/// see the module docs there.
 ///
 /// We generate into an in-memory buffer (whose writes are infallible) rather
 /// than handing `generate` the real stdout: `clap_complete::generate` panics on
@@ -123,17 +129,143 @@ fn print_subcommand_help(name: &str) -> Result<()> {
 /// would otherwise abort with a `BrokenPipe` panic. Writing the finished buffer
 /// ourselves lets us treat a broken pipe as a clean exit, matching how ordinary
 /// stream tools behave when truncated.
-fn run_completions(shell: clap_complete::Shell) -> Result<()> {
+fn run_completions(shell: CompletionShell) -> Result<()> {
     let mut cmd = Cli::command();
     let bin_name = cmd.get_name().to_string();
     let mut buf = Vec::new();
-    clap_complete::generate(shell, &mut cmd, bin_name, &mut buf);
+    match shell {
+        CompletionShell::Bash => write_bash_completion(&bin_name, &mut buf),
+        CompletionShell::Zsh => {
+            clap_complete::generate(clap_complete::Shell::Zsh, &mut cmd, bin_name, &mut buf)
+        }
+        CompletionShell::Fish => {
+            clap_complete::generate(clap_complete::Shell::Fish, &mut cmd, bin_name, &mut buf)
+        }
+    }
     match std::io::stdout().write_all(&buf) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
         Err(e) => Err(e.into()),
     }
 }
+
+/// Resolve dynamic completion candidates for the bash integration.
+///
+/// Invoked by the generated bash function (see [`write_bash_completion`]) as
+/// `pcloud-cli __complete --index <COMP_CWORD> -- <COMP_WORDS...>`. We reuse
+/// `clap_complete`'s resolution engine (which understands the subcommand tree,
+/// flags, and `value_hint`s) and print one `value\t<description>` line per
+/// candidate. The bash side handles cobra-style formatting.
+fn run_complete(args: CompleteArgs) -> Result<()> {
+    let mut cmd = Cli::command();
+    let current_dir = std::env::current_dir().ok();
+    let candidates =
+        clap_complete::engine::complete(&mut cmd, args.words, args.index, current_dir.as_deref())
+            .map_err(PCloudError::Io)?;
+
+    let mut buf = Vec::new();
+    for candidate in candidates {
+        if candidate.is_hide_set() {
+            continue;
+        }
+        let value = candidate.get_value().to_string_lossy();
+        match candidate.get_help() {
+            // Descriptions can be multi-line; completions only want the summary.
+            Some(help) => {
+                let help = help.to_string();
+                let first = help.lines().next().unwrap_or_default();
+                let _ = writeln!(buf, "{}\t{}", value, first);
+            }
+            None => {
+                let _ = writeln!(buf, "{}", value);
+            }
+        }
+    }
+    match std::io::stdout().write_all(&buf) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Emit a description-aware bash completion script for `bin_name`.
+///
+/// clap_complete's bash output lists bare command names; this script instead
+/// calls back into the binary (`__complete`) at completion time and renders
+/// candidates cobra-style — each padded to `value  (description)`. Because bash
+/// only inserts the longest common prefix when several candidates match, the
+/// `(description)` suffixes are display-only and never end up on the command
+/// line; once a single candidate remains the bare value is inserted. The
+/// registration deliberately omits `-o default`, so there is no spurious
+/// fall-back to filesystem listing for argument-less subcommands.
+fn write_bash_completion(bin_name: &str, buf: &mut Vec<u8>) {
+    let fn_name = format!("_{}_complete", bin_name.replace(['-', '.'], "_"));
+    let script = BASH_COMPLETION_TEMPLATE
+        .replace("{FN}", &fn_name)
+        .replace("{BIN}", bin_name);
+    buf.extend_from_slice(script.as_bytes());
+}
+
+/// Bash completion template. `{FN}` is the completion function name and `{BIN}`
+/// the command it is registered for. See [`write_bash_completion`].
+const BASH_COMPLETION_TEMPLATE: &str = r#"{FN}() {
+    local words cword
+    words=("${COMP_WORDS[@]}")
+    cword=$COMP_CWORD
+
+    local response
+    local IFS=$'\n'
+    response=$("${words[0]}" __complete --index "$cword" -- "${words[@]}" 2>/dev/null)
+    if [[ $? -ne 0 ]]; then
+        COMPREPLY=()
+        return 0
+    fi
+
+    local -a values=() descs=()
+    local maxlen=0 line value desc
+    for line in $response; do
+        value="${line%%$'\t'*}"
+        if [[ "$line" == *$'\t'* ]]; then
+            desc="${line#*$'\t'}"
+        else
+            desc=""
+        fi
+        values+=("$value")
+        descs+=("$desc")
+        (( ${#value} > maxlen )) && maxlen=${#value}
+    done
+
+    if (( ${#values[@]} == 0 )); then
+        COMPREPLY=()
+        return 0
+    fi
+
+    if (( ${#values[@]} == 1 )); then
+        COMPREPLY=("${values[0]}")
+        # Directory candidates carry a trailing slash; let the user keep typing.
+        [[ "${values[0]}" == */ ]] && compopt -o nospace
+        return 0
+    fi
+
+    # Multiple candidates: show "value  (description)" entries. Bash inserts only
+    # the common prefix (within the value), so descriptions stay display-only.
+    local i out
+    COMPREPLY=()
+    for i in "${!values[@]}"; do
+        value="${values[$i]}"
+        desc="${descs[$i]}"
+        if [[ -n "$desc" ]]; then
+            printf -v out '%-*s  (%s)' "$maxlen" "$value" "$desc"
+        else
+            out="$value"
+        fi
+        COMPREPLY+=("$out")
+    done
+    compopt -o nosort 2>/dev/null
+    return 0
+}
+complete -F {FN} {BIN}
+"#;
 
 // ============================================================================
 // auth subcommands

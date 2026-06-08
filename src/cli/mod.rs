@@ -21,7 +21,8 @@ pub mod auth_prompt;
 // Re-export main types for convenience
 pub use args::{
     default_mountpoint, resolve_mountpoint, AuthArgs, AuthOp, BackupArgs, BackupOp, Cli, Command,
-    CryptoArgs, CryptoOp, MountArgs, ServiceArgs, ServiceOp, StartArgs,
+    CompleteArgs, CompletionShell, CryptoArgs, CryptoOp, MountArgs, ServiceArgs, ServiceOp,
+    StartArgs,
 };
 pub use auth_prompt::{
     print_cli_auth_help, prompt_auth_choice, prompt_confirm, prompt_confirm_by_name, prompt_token,

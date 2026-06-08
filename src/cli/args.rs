@@ -22,8 +22,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
-use clap::{Args, Parser, Subcommand};
-use clap_complete::Shell;
+use clap::{Args, Parser, Subcommand, ValueHint};
 
 /// Build a multi-line version string including pclsync info.
 fn build_version_string() -> String {
@@ -125,8 +124,38 @@ pub enum Command {
     Completions {
         /// Shell to generate the completion script for.
         #[arg(value_name = "SHELL")]
-        shell: Shell,
+        shell: CompletionShell,
     },
+
+    /// Internal: resolve dynamic completion candidates for the bash integration.
+    ///
+    /// Invoked by the generated bash completion function — not part of the
+    /// user-facing surface. Prints one `value\t<description>` line per candidate.
+    #[command(name = "__complete", hide = true)]
+    Complete(CompleteArgs),
+}
+
+/// Shells for which `completions` can emit a script.
+///
+/// Deliberately excludes PowerShell and Elvish: the application targets Linux
+/// and macOS (FUSE), and these are the three shells the project supports.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum CompletionShell {
+    Bash,
+    Zsh,
+    Fish,
+}
+
+/// Arguments for the hidden `__complete` callback used by bash completion.
+#[derive(Args, Debug, Clone)]
+pub struct CompleteArgs {
+    /// Index of the word being completed (bash `COMP_CWORD`).
+    #[arg(long = "index", default_value_t = 0)]
+    pub index: usize,
+
+    /// The current command-line words (bash `COMP_WORDS`), including argv[0].
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub words: Vec<std::ffi::OsString>,
 }
 
 // ============================================================================
@@ -180,7 +209,7 @@ pub enum AuthOp {
 #[derive(Args, Debug, Clone)]
 pub struct MountArgs {
     /// Mount path. Defaults to `$PCLOUD_MOUNTPOINT` or `~/pCloud`.
-    #[arg(value_name = "PATH")]
+    #[arg(value_name = "PATH", value_hint = ValueHint::DirPath)]
     pub path: Option<PathBuf>,
 
     /// Auth token to use for this session (overrides saved credentials).
@@ -195,7 +224,7 @@ pub struct MountArgs {
 #[derive(Args, Debug, Clone)]
 pub struct StartArgs {
     /// Mount path. Defaults to `$PCLOUD_MOUNTPOINT` or `~/pCloud`.
-    #[arg(value_name = "PATH")]
+    #[arg(value_name = "PATH", value_hint = ValueHint::DirPath)]
     pub path: Option<PathBuf>,
 
     /// Auth token to use for this session (overrides saved credentials).
@@ -239,7 +268,7 @@ pub enum CryptoOp {
     /// Auto-starts the daemon if saved credentials exist.
     Start {
         /// Read the crypto password from this file (newline-trimmed).
-        #[arg(long = "password-file", value_name = "FILE")]
+        #[arg(long = "password-file", value_name = "FILE", value_hint = ValueHint::FilePath)]
         password_file: Option<PathBuf>,
     },
 
@@ -269,6 +298,7 @@ pub enum BackupOp {
     /// Register a local folder as a pCloud backup destination.
     Add {
         /// Local folder to back up.
+        #[arg(value_hint = ValueHint::DirPath)]
         path: PathBuf,
     },
     /// List backups configured for the current device.
@@ -276,6 +306,7 @@ pub enum BackupOp {
     /// Remove a backup by sync id (does not delete files).
     Remove {
         /// Sync id of the backup to remove.
+        #[arg(value_hint = ValueHint::Other)]
         id: u32,
     },
     /// Stop all backups on this device.
@@ -283,6 +314,7 @@ pub enum BackupOp {
     /// Show backup status; optionally filter to a single backup by id.
     Status {
         /// Sync id to filter on. Omit for a full-device summary.
+        #[arg(value_hint = ValueHint::Other)]
         id: Option<u32>,
     },
     /// Print the backup root folder name for this device.
@@ -310,7 +342,7 @@ pub enum ServiceOp {
     Install {
         /// Mount path for the service. Defaults like `start`
         /// (`$PCLOUD_MOUNTPOINT` or `~/pCloud`).
-        #[arg(value_name = "PATH")]
+        #[arg(value_name = "PATH", value_hint = ValueHint::DirPath)]
         path: Option<PathBuf>,
         /// Install as a per-user service for the calling user (default).
         #[arg(long, conflicts_with = "system")]
@@ -434,17 +466,52 @@ mod tests {
 
     #[test]
     fn completions_subcommand_parses() {
-        let cli = Cli::parse_from_args(["pcloud-cli", "completions", "bash"]);
-        assert!(matches!(
-            cli.command,
-            Some(Command::Completions { shell: Shell::Bash })
-        ));
+        for (arg, want) in [
+            ("bash", CompletionShell::Bash),
+            ("zsh", CompletionShell::Zsh),
+            ("fish", CompletionShell::Fish),
+        ] {
+            let cli = Cli::parse_from_args(["pcloud-cli", "completions", arg]);
+            match cli.command {
+                Some(Command::Completions { shell }) => assert_eq!(shell, want),
+                other => panic!("expected completions {arg}, got {other:?}"),
+            }
+        }
     }
 
     #[test]
     fn completions_rejects_unknown_shell() {
         let res = Cli::try_parse_from_args(["pcloud-cli", "completions", "bogus-shell"]);
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn completions_rejects_powershell_and_elvish() {
+        // The app targets Linux/macOS only; these shells are intentionally unsupported.
+        for shell in ["powershell", "elvish"] {
+            let res = Cli::try_parse_from_args(["pcloud-cli", "completions", shell]);
+            assert!(res.is_err(), "expected {shell} to be rejected");
+        }
+    }
+
+    #[test]
+    fn complete_hidden_subcommand_parses() {
+        let cli = Cli::parse_from_args([
+            "pcloud-cli",
+            "__complete",
+            "--index",
+            "1",
+            "--",
+            "pcloud-cli",
+            "ba",
+        ]);
+        match cli.command {
+            Some(Command::Complete(args)) => {
+                assert_eq!(args.index, 1);
+                assert_eq!(args.words, ["pcloud-cli", "ba"]);
+            }
+            other => panic!("expected __complete, got {other:?}"),
+        }
     }
 
     #[test]
