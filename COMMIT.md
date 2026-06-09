@@ -39,6 +39,7 @@ The subject line follows this structure:
 | `Mount`  | FUSE mount/unmount operations                                        |
 | `Sync`   | Sync-related CLI controls and configuration                          |
 | `Daemon` | Background process management, IPC, signal handling                  |
+| `TUI`    | Terminal UI dashboard: screens, panels, widgets, key handling        |
 
 **Infrastructure:**
 
@@ -100,6 +101,7 @@ Your commit subject line must be able to complete the sentence
 - `Crypto | Add --password-file option to crypto setup`
 - `Sync | Add --exclude flag for selective sync`
 - `Daemon | Fix IPC socket cleanup on abnormal shutdown`
+- `TUI | Hide the activity log panel from the dashboard`
 - `CLI | Improve error output formatting`
 - `FFI | Add bindings for psync_crypto_mkdir`
 - `Build | Link against system OpenSSL on Linux`
