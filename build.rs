@@ -233,6 +233,25 @@ fn main() {
 
     println!("cargo:rustc-env=PCLOUD_VERSION={}", version);
     println!("cargo:rerun-if-env-changed=PCLOUD_BUILD_PROFILE");
+
+    // Resolve the Bugsnag notifier API key for the `crash-reporting` feature.
+    //
+    // The key is forwarded into the crate as `BUGSNAG_API_KEY` so the source can
+    // read it with `env!`. We only emit it when the feature is enabled (Cargo
+    // sets `CARGO_FEATURE_CRASH_REPORTING` in that case) to keep stock builds
+    // free of any Bugsnag wiring. A built-in default lets the feature build
+    // out-of-the-box; `BUGSNAG_API_KEY` in the environment overrides it (e.g.
+    // for a separate project/key in CI). The embedded literal is obfuscated in
+    // the final binary by `obfstr` at the use site — a Bugsnag notifier key is
+    // a client-side ingestion key (it ships in every client), not a secret.
+    if env::var_os("CARGO_FEATURE_CRASH_REPORTING").is_some() {
+        const DEFAULT_BUGSNAG_API_KEY: &str = "b51b3edf1fa72fb51d4fe06648d2d19f";
+        let api_key = env::var("BUGSNAG_API_KEY")
+            .ok()
+            .filter(|k| !k.is_empty())
+            .unwrap_or_else(|| DEFAULT_BUGSNAG_API_KEY.to_string());
+        println!("cargo:rustc-env=BUGSNAG_API_KEY={}", api_key);
+    }
     println!("cargo:rerun-if-env-changed=BUGSNAG_API_KEY");
 
     // Emit console-client git commit hash

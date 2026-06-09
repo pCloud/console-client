@@ -8,19 +8,22 @@ static CLIENT: OnceLock<Arc<Bugsnag>> = OnceLock::new();
 
 /// Return the Bugsnag API key.
 ///
+/// The key is embedded at compile time from `BUGSNAG_API_KEY` (resolved by
+/// `build.rs`, which supplies a built-in default when the variable is unset).
+/// It is stored obfuscated in the binary via `obfstr` and deobfuscated into a
+/// fresh `String` on each call, so the plaintext key never appears as a
+/// readable literal in the compiled output (frustrating a casual `strings`).
+///
 /// Under `#[cfg(test)]` this returns a mock value so that tests compile
 /// without requiring the `BUGSNAG_API_KEY` environment variable.
-pub(crate) fn api_key() -> &'static str {
+pub(crate) fn api_key() -> String {
     #[cfg(test)]
     {
-        "test-api-key"
+        "test-api-key".to_string()
     }
     #[cfg(not(test))]
     {
-        env!(
-            "BUGSNAG_API_KEY",
-            "BUGSNAG_API_KEY env var must be set at compile time"
-        )
+        obfstr::obfstring!(env!("BUGSNAG_API_KEY"))
     }
 }
 
@@ -40,7 +43,7 @@ fn release_stage() -> &'static str {
 pub fn create_client() -> Arc<Bugsnag> {
     CLIENT
         .get_or_init(|| {
-            let mut client = Bugsnag::new(api_key(), env!("CARGO_MANIFEST_DIR"));
+            let mut client = Bugsnag::new(&api_key(), env!("CARGO_MANIFEST_DIR"));
             client.set_app_info(
                 Some(env!("PCLOUD_VERSION")),
                 Some(release_stage()),
