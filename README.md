@@ -113,11 +113,14 @@ cargo build --release
 The build system supports three profiles that control the version suffix and
 whether crash reporting is included:
 
-| Profile     | Command                                                                                      | Crash reporting |
-|-------------|----------------------------------------------------------------------------------------------|-----------------|
-| Development | `cargo build`                                                                                | No              |
-| QA          | `BUGSNAG_API_KEY=<key> PCLOUD_BUILD_PROFILE=qa cargo build --release --features crash-reporting` | Yes             |
-| Release     | `BUGSNAG_API_KEY=<key> cargo build --release --features crash-reporting`                      | Yes             |
+| Profile     | Command                                                                  | Crash reporting |
+|-------------|--------------------------------------------------------------------------|-----------------|
+| Development | `cargo build`                                                            | No              |
+| QA          | `PCLOUD_BUILD_PROFILE=qa cargo build --release --features crash-reporting` | Yes             |
+| Release     | `cargo build --release --features crash-reporting`                       | Yes             |
+
+(The QA/Release builds use the built-in Bugsnag key; prefix either command with
+`BUGSNAG_API_KEY=<key>` to report to a different project.)
 
 - **Development** — Default `cargo build` with no extra flags. Fast iteration,
   debug symbols, no crash reporting, no API key needed.
@@ -449,14 +452,29 @@ to [Bugsnag](https://www.bugsnag.com) for both Rust and C code.
 | Crash type          | Mechanism                                      |
 |---------------------|------------------------------------------------|
 | Rust panics         | Custom `panic::set_hook` sends a Bugsnag error |
-| Native signals      | `crash-handler` catches SIGSEGV, SIGABRT, SIGBUS, SIGFPE; a monitor thread writes a minidump and uploads it to Bugsnag |
+| Native signals      | `crash-handler` catches SIGSEGV, SIGABRT, SIGBUS, SIGFPE; an out-of-process reporter writes a minidump and uploads it to Bugsnag |
 | Non-fatal errors    | Top-level application errors are sent via `notify_error()` |
 
-Native crash handling uses an out-of-process model: a dedicated monitor thread
-runs a `minidumper::Server` over IPC. When a signal fires, the handler requests
-the monitor to write a minidump from the crashed process via `ptrace`, then
-uploads it. If the upload fails at crash time the dump is queued to
+Native crash handling uses an out-of-process model: the binary re-execs itself
+with a hidden `--crash-monitor` flag to spawn a dedicated **reporter child
+process** that runs a `minidumper::Server` over IPC. When a signal fires, the
+in-process handler asks the reporter to write a minidump of the crashed process
+via `ptrace`, then the reporter uploads it. (A separate process is required on
+Linux because the kernel forbids `ptrace` between threads of the same process.)
+If the upload fails at crash time the dump is queued to
 `$XDG_DATA_HOME/pcloud/crashes/` and retried on the next startup.
+
+**Where each kind is active.** The Rust panic hook and the deferred-dump upload
+are installed once at startup and survive `fork`, so they cover *every* process,
+including the background daemon. The native (signal) handler is fork-sensitive —
+the reporter is spawned as a child of the monitored process and `PR_SET_PTRACER`
+is declared on it, and both relationships are broken by the daemon's
+double-fork. It is therefore installed **after** any daemonization, in the
+long-running engine processes that can actually take a native crash: the
+foreground `mount`, and the `start` daemon/foreground body once it is past
+`daemonize()` (this covers the background daemon, where the pclsync C engine and
+FUSE run). Short-lived, IPC-only commands (`status`, `stop`, the TUI, …) rely on
+the panic hook only.
 
 ### Enabling crash reporting
 
@@ -464,7 +482,14 @@ Crash reporting is gated behind the `crash-reporting` Cargo feature and is
 **off by default** — plain `cargo build` produces a binary with no Bugsnag
 dependency and no API key requirement.
 
-To enable it, pass the feature flag and provide a Bugsnag API key at build time:
+To enable it, just pass the feature flag — a default Bugsnag API key is baked in,
+so it builds out of the box:
+
+```bash
+cargo build --release --features crash-reporting
+```
+
+To report to a different Bugsnag project, override the key at build time:
 
 ```bash
 BUGSNAG_API_KEY=<your-key> cargo build --release --features crash-reporting
@@ -472,21 +497,25 @@ BUGSNAG_API_KEY=<your-key> cargo build --release --features crash-reporting
 
 ### How the API key is provided
 
-The Bugsnag API key is injected at **compile time** through the `BUGSNAG_API_KEY`
-environment variable. The build script (`build.rs`) declares
-`cargo:rerun-if-env-changed=BUGSNAG_API_KEY` so Cargo will rebuild when the
-value changes.
+The Bugsnag API key is resolved at **compile time** by the build script
+(`build.rs`): it uses the `BUGSNAG_API_KEY` environment variable if set and
+non-empty, and otherwise falls back to a built-in default. The resolved value is
+forwarded into the crate (and read in the source via `env!("BUGSNAG_API_KEY")`)
+only when the `crash-reporting` feature is enabled. `build.rs` declares
+`cargo:rerun-if-env-changed=BUGSNAG_API_KEY` so Cargo rebuilds when the value
+changes. This means:
 
-Inside the source the key is read with `env!("BUGSNAG_API_KEY")`, which means:
-
-- The key must be set in the environment **when `cargo build` runs**. If the
-  `crash-reporting` feature is enabled and the variable is missing, compilation
-  fails with a clear error.
-- The key is embedded in the binary as a string literal. For distribution
-  builds, run `strip` on the binary and upload Breakpad symbols separately (see
-  below) to avoid shipping debug info alongside the key.
+- Building with `--features crash-reporting` never fails for a missing key — the
+  default is used. Set `BUGSNAG_API_KEY` only to target a different project.
+- The key is **obfuscated** in the binary with [`obfstr`](https://docs.rs/obfstr):
+  it is stored xor-encoded and deobfuscated into a fresh `String` at each use, so
+  the plaintext key does not appear as a readable literal (a plain `strings` on
+  the binary will not surface it). A Bugsnag *notifier* key is a client-side
+  ingestion key that ships in every client — it is not a secret — but obfuscation
+  raises the bar against casual extraction. For distribution builds, still
+  `strip` the binary and upload Breakpad symbols separately (see below).
 - Development builds (`cargo build` without `--features crash-reporting`) never
-  reference the variable, so no key is needed for day-to-day work.
+  reference the variable and contain no key.
 
 ### Symbol upload
 

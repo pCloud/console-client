@@ -91,10 +91,25 @@ src/
 |   |-- mod.rs           # Re-exports
 |   +-- password.rs      # SecurePassword with zeroization
 |
+|-- crash_reporting/     # Bugsnag crash reporting (feature "crash-reporting")
+|   |-- mod.rs           # No-op stubs when disabled; init / install_native_handler
+|   |-- config.rs        # Bugsnag client singleton, obfstr-obfuscated API key
+|   |-- panic_hook.rs    # Rust panic hook -> Bugsnag (installed in init)
+|   +-- native.rs        # Out-of-process minidump reporter (--crash-monitor)
+|
 +-- utils/               # Common utilities
     |-- mod.rs           # Re-exports
     +-- cstring.rs       # C string conversion helpers
 ```
+
+Note: `crash_reporting/` is gated behind the non-default `crash-reporting`
+Cargo feature (`default = []`). With it off, the public API in `mod.rs`
+(`check_monitor_args`, `init`, `install_native_handler`, `notify_error`)
+compiles to no-ops. `init()` installs the Rust panic hook + deferred-dump upload
+(both survive `fork`, covering every process); the fork-sensitive native signal
+handler is installed separately by `install_native_handler()`, called from the
+engine entry points (`mount`, and `start` once past `daemonize()`). See the
+"Crash Reporting" section of `README.md` for the full design.
 
 ## Key Files Outside `src/`
 
