@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use ratatui::crossterm::event::{self, Event};
+use ratatui::crossterm::event::{self, Event, KeyEventKind};
 
 use crate::cli::Cli;
 use crate::daemon::DaemonClient;
@@ -52,7 +52,12 @@ pub fn run(daemon: DaemonClient, _cli: &Cli) -> Result<()> {
 
         if event::poll(timeout).map_err(crate::error::PCloudError::Io)? {
             if let Event::Key(key) = event::read().map_err(crate::error::PCloudError::Io)? {
-                app.handle_key(key);
+                // Only act on key presses: terminals with keyboard-enhancement
+                // support also emit Release (and Repeat) events, which would
+                // otherwise fire a chord like Ctrl+T twice.
+                if key.kind == KeyEventKind::Press {
+                    app.handle_key(key);
+                }
             }
         }
 
