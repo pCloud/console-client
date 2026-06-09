@@ -14,6 +14,12 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RELEASE_BUILD: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v')) }}
+  # Single source of truth for the Bugsnag notifier key, used by BOTH the
+  # `--features crash-reporting` builds and the Breakpad symbol upload, so the
+  # key embedded in the binary and the project the symbols are uploaded to can
+  # never drift apart. Falls back to the built-in default when the repo secret
+  # is unset — keep this literal in sync with DEFAULT_BUGSNAG_API_KEY in build.rs.
+  BUGSNAG_API_KEY: ${{ secrets.BUGSNAG_API_KEY || 'b51b3edf1fa72fb51d4fe06648d2d19f' }}
 
 jobs:
   setup:
@@ -49,8 +55,14 @@ jobs:
       - name: Clippy
         run: cargo clippy -- -D warnings
 
+      - name: Clippy (crash-reporting)
+        run: cargo clippy --features crash-reporting -- -D warnings
+
       - name: Cargo check
         run: cargo check
+
+      - name: Cargo check (crash-reporting)
+        run: cargo check --features crash-reporting
 
   build-and-test:
     needs: setup
@@ -101,7 +113,6 @@ jobs:
           fi
           cargo build --release --target ${{ matrix.target }} $FEATURES
         env:
-          BUGSNAG_API_KEY: ${{ secrets.BUGSNAG_API_KEY }}
           CC: ${{ matrix.cc || '' }}
           PKG_CONFIG_PATH: ${{ matrix.pkg-config-path || env.PKG_CONFIG_PATH || '' }}
           PKG_CONFIG_ALLOW_CROSS: ${{ matrix.cc && '1' || '' }}
@@ -186,7 +197,6 @@ jobs:
           fi
           cargo build --release --target aarch64-apple-darwin $FEATURES
         env:
-          BUGSNAG_API_KEY: ${{ secrets.BUGSNAG_API_KEY }}
           PKG_CONFIG_PATH: /opt/homebrew/opt/openssl@3/lib/pkgconfig
 
       - name: Build x86_64
@@ -197,7 +207,6 @@ jobs:
           fi
           cargo build --release --target x86_64-apple-darwin $FEATURES
         env:
-          BUGSNAG_API_KEY: ${{ secrets.BUGSNAG_API_KEY }}
           PKG_CONFIG_PATH: /usr/local/opt/openssl@3/lib/pkgconfig
 
       - name: Test (native aarch64 only)
@@ -279,8 +288,6 @@ jobs:
               https://upload.bugsnag.com/breakpad
           done
           echo "All symbols uploaded."
-        env:
-          BUGSNAG_API_KEY: ${{ secrets.BUGSNAG_API_KEY }}
 
   package:
     runs-on: ubuntu-latest
