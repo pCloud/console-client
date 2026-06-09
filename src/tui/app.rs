@@ -21,8 +21,6 @@ use super::state::{
 pub struct App {
     pub state: TuiState,
     daemon: DaemonClient,
-    /// Highest activity-log sequence id already pulled from the daemon.
-    activity_cursor: u64,
 }
 
 impl App {
@@ -30,7 +28,6 @@ impl App {
         Self {
             state: TuiState::new(),
             daemon,
-            activity_cursor: 0,
         }
     }
 
@@ -243,23 +240,6 @@ impl App {
             }
             KeyCode::BackTab => {
                 self.state.active_panel = self.state.active_panel.prev();
-            }
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.scroll_log_up();
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                self.scroll_log_down();
-            }
-            KeyCode::Home | KeyCode::Char('g') => {
-                if !self.state.activity_log.is_empty() {
-                    self.state.log_state.select(Some(0));
-                }
-            }
-            KeyCode::End | KeyCode::Char('G') => {
-                let len = self.state.activity_log.len();
-                if len > 0 {
-                    self.state.log_state.select(Some(len - 1));
-                }
             }
             KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.handle_crypto_action();
@@ -769,40 +749,6 @@ impl App {
         }
     }
 
-    // ===== Scrolling =====
-
-    fn scroll_log_up(&mut self) {
-        let i = match self.state.log_state.selected() {
-            Some(i) => {
-                if i > 0 {
-                    i - 1
-                } else {
-                    0
-                }
-            }
-            None => 0,
-        };
-        self.state.log_state.select(Some(i));
-    }
-
-    fn scroll_log_down(&mut self) {
-        let len = self.state.activity_log.len();
-        if len == 0 {
-            return;
-        }
-        let i = match self.state.log_state.selected() {
-            Some(i) => {
-                if i + 1 < len {
-                    i + 1
-                } else {
-                    len - 1
-                }
-            }
-            None => 0,
-        };
-        self.state.log_state.select(Some(i));
-    }
-
     /// Attempt to (re)start the daemon after it became unavailable.
     fn restart_daemon(&mut self) {
         match crate::daemon::process::spawn_background_daemon(
@@ -834,25 +780,10 @@ impl App {
         }
     }
 
-    /// Fetch activity-log entries newer than the cursor and append them.
-    fn poll_activity(&mut self) {
-        if let Some(DaemonResponse::Activity { entries, cursor }) =
-            self.send(DaemonCommand::ActivitySince {
-                cursor: self.activity_cursor,
-            })
-        {
-            for entry in entries {
-                self.state.push_activity(entry);
-            }
-            self.activity_cursor = cursor;
-        }
-    }
-
-    /// Periodic tick -- polls the daemon for state and activity over IPC.
+    /// Periodic tick -- polls the daemon for state over IPC.
     pub fn tick(&mut self) {
         self.state.clear_expired_status_message();
         self.poll_status();
-        self.poll_activity();
 
         // Keep the backups list current while the Backups screen is shown.
         if self.state.active_screen == Screen::Backups {

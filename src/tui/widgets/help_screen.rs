@@ -10,7 +10,6 @@ pub fn render(frame: &mut Frame, area: Rect) {
         ("q", "Quit application"),
         ("1/2/3/4", "Switch tabs"),
         ("Tab", "Switch panel focus (Dashboard)"),
-        ("Up/Down", "Scroll activity log / select backup"),
         ("Ctrl+L", "Crypto (auto: Setup/Unlock/Lock)"),
         ("Ctrl+P", "Sync pause / resume (auto by state)"),
         ("Ctrl+T", "Sync stop / start (auto by state)"),
@@ -18,6 +17,7 @@ pub fn render(frame: &mut Frame, area: Rect) {
     ];
 
     let backup_shortcuts = [
+        ("Up/Down", "Select a backup"),
         ("a", "Add a folder to back up"),
         ("d", "Remove the selected backup"),
         ("S", "Stop all backups on this device"),

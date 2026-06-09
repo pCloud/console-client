@@ -82,8 +82,6 @@ pub fn render(frame: &mut Frame, state: &TuiState, area: Rect) {
                     Span::styled("Tabs  ", theme::key_desc_style()),
                     Span::styled("Tab ", theme::key_hint_style()),
                     Span::styled("Switch  ", theme::key_desc_style()),
-                    Span::styled("\u{2191}\u{2193} ", theme::key_hint_style()),
-                    Span::styled("Scroll  ", theme::key_desc_style()),
                     Span::styled("Ctrl+L ", theme::key_hint_style()),
                     Span::styled("Crypto  ", theme::key_desc_style()),
                 ];

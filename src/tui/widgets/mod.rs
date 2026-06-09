@@ -1,5 +1,4 @@
 pub mod about_screen;
-pub mod activity_log;
 pub mod auth_screen;
 pub mod backup_confirm;
 pub mod backup_input;

@@ -1,4 +1,3 @@
-use std::collections::VecDeque;
 use std::time::Instant;
 
 use ratatui::widgets::ListState;
@@ -6,7 +5,7 @@ use ratatui::widgets::ListState;
 use crate::ffi::types::status_to_string;
 use crate::wrapper::{AuthState, BackupInfo, CryptoState};
 // Re-exported so existing `crate::tui::state::*` references keep resolving.
-pub use crate::wrapper::{ActivityEntry, StatusSnapshot, SyncEngineState};
+pub use crate::wrapper::{StatusSnapshot, SyncEngineState};
 
 /// Top-level screen / tab.
 #[derive(Clone, Debug, PartialEq)]
@@ -22,7 +21,6 @@ pub enum Screen {
 pub enum Panel {
     Crypto,
     Transfers,
-    ActivityLog,
 }
 
 impl Panel {
@@ -30,18 +28,12 @@ impl Panel {
         match self {
             Panel::Crypto => Panel::Transfers,
             Panel::Transfers => Panel::Crypto,
-            // Activity log is hidden from the dashboard, so it's not part of the
-            // Tab cycle; map it back to a visible panel defensively.
-            Panel::ActivityLog => Panel::Crypto,
         }
     }
 
     pub fn prev(&self) -> Self {
-        match self {
-            Panel::Crypto => Panel::Transfers,
-            Panel::Transfers => Panel::Crypto,
-            Panel::ActivityLog => Panel::Transfers,
-        }
+        // Only two panels, so prev mirrors next.
+        self.next()
     }
 }
 
@@ -102,9 +94,6 @@ pub enum StatusMessageKind {
     Error,
 }
 
-/// Maximum number of activity log entries to keep.
-const MAX_ACTIVITY_LOG: usize = 100;
-
 /// The full TUI state.
 pub struct TuiState {
     pub active_screen: Screen,
@@ -118,10 +107,8 @@ pub struct TuiState {
     pub quota_total: u64,
     pub account_location: Option<String>,
     pub crypto_folder_path: Option<String>,
-    pub activity_log: VecDeque<ActivityEntry>,
     pub active_panel: Panel,
     pub should_quit: bool,
-    pub log_state: ListState,
     pub input_mode: InputMode,
     pub input_buffer: String,
     pub password_stash: Option<secrecy::SecretString>,
@@ -161,10 +148,8 @@ impl TuiState {
             quota_total: 0,
             account_location: None,
             crypto_folder_path: None,
-            activity_log: VecDeque::new(),
             active_panel: Panel::Crypto,
             should_quit: false,
-            log_state: ListState::default(),
             input_mode: InputMode::Normal,
             input_buffer: String::new(),
             password_stash: None,
@@ -199,19 +184,6 @@ impl TuiState {
         } else {
             let idx = self.backup_list_state.selected().unwrap_or(0).min(len - 1);
             self.backup_list_state.select(Some(idx));
-        }
-    }
-
-    /// Add an activity log entry, trimming old ones.
-    pub fn push_activity(&mut self, entry: ActivityEntry) {
-        self.activity_log.push_back(entry);
-        if self.activity_log.len() > MAX_ACTIVITY_LOG {
-            self.activity_log.pop_front();
-        }
-        // Auto-scroll to bottom
-        let len = self.activity_log.len();
-        if len > 0 {
-            self.log_state.select(Some(len - 1));
         }
     }
 

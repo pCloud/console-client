@@ -42,7 +42,6 @@ src/tui/
     |-- mount_panel.rs  # Filesystem mount status
     |-- crypto_panel.rs # Crypto lock/unlock status with action button
     |-- transfer.rs     # Download/upload LineGauge progress bars
-    |-- activity_log.rs # Scrollable file event list (stateful List widget)
     |-- help_bar.rs     # Context-sensitive keyboard shortcuts footer
     |-- auth_screen.rs  # Full-screen auth flow (menu, token input, web/QR wait)
     |-- password_input.rs  # Modal popup for crypto password/hint entry
@@ -62,7 +61,6 @@ to, the daemon over the Unix socket via `DaemonClient`.
 
 ```
 1-second tick ──> App.tick() ──> poll_status()   (DaemonCommand::StatusFull)
-                                  poll_activity() (DaemonCommand::ActivitySince { cursor })
                                                 |
 Crossterm key events ─────────────────> App.handle_key()
                                                 |  (actions send IPC commands:
@@ -78,24 +76,26 @@ Crossterm key events ─────────────────> App.ha
                           ┌─────────────────────┼──────────────────────┐
                     auth screens          dashboard panels        modal overlays
                   (auth_screen.rs)     (header, mount, crypto,  (password_input,
-                                       transfer, activity_log)   unlink_confirm)
+                                       transfer)                 unlink_confirm)
 ```
 
 `App.send()` wraps every `DaemonClient::send_command(...)`. On an IPC failure it
 sets `state.daemon_unavailable = true` (surfacing a "Daemon unavailable — press
 Ctrl+R to restart" message) and returns `None` so callers degrade gracefully.
 Connectivity is re-established automatically on the next successful command.
-`activity_cursor` tracks the highest activity sequence id already pulled so
-`ActivitySince` only returns new entries.
+
+> The daemon still records file events into a bounded `ActivityLog` ring buffer
+> and exposes them over the `ActivitySince`/`Activity` IPC command, but the TUI
+> no longer renders an activity-log panel and does **not** poll it.
 
 ### Threading Model
 
 - **Main thread**: Owns the terminal, runs the event loop, renders UI, and
-  performs all IPC round-trips (`StatusFull` / `ActivitySince` on each tick,
-  action commands on key presses). There are no other threads in the TUI.
+  performs all IPC round-trips (`StatusFull` on each tick, action commands on
+  key presses). There are no other threads in the TUI.
 - **No C callbacks**: The TUI does not register status/event/fs callbacks and
   has no `mpsc` channel. The live event stream lives in the daemon, which feeds
-  a bounded `ActivityLog` ring buffer that the TUI polls via `ActivitySince`.
+  a bounded `ActivityLog` ring buffer (no longer consumed by the TUI).
 - **Web auth**: Started by sending `DaemonCommand::AuthBeginWeb`; the daemon
   runs the browser-login wait on its own thread. The TUI displays the returned
   URL/QR (`DaemonResponse::AuthWeb`) and detects success by polling `StatusFull`.
@@ -130,7 +130,7 @@ The UI has four top-level screens, switchable via number keys:
 
 | Key | Screen | Content |
 |-----|--------|---------|
-| `1` | Dashboard | Live sync status, panels, activity log |
+| `1` | Dashboard | Live sync status, panels (header, crypto, transfers) |
 | `2` | Backups | Device backup root + add/remove/stop-device |
 | `3` | Help | Keyboard shortcuts, support links |
 | `4` | About | Version info, build hashes, license |
@@ -146,10 +146,6 @@ The `tab_bar` widget renders the tab selector. The `help_bar` widget adapts its 
 | `Ctrl+C` | Quit |
 | `1` / `2` / `3` / `4` | Switch screen |
 | `Tab` / `Shift+Tab` | Cycle panel focus |
-| `Up` / `k` | Scroll activity log up |
-| `Down` / `j` | Scroll activity log down |
-| `Home` / `g` | Jump to log top |
-| `End` / `G` | Jump to log bottom |
 | `Ctrl+L` | Crypto action (auto-selects Setup/Unlock/Lock) |
 | `Ctrl+P` | Pause / resume sync transfers |
 | `Ctrl+T` | Stop / resume sync |
@@ -210,7 +206,7 @@ pub mod your_widget;
 ### Widget Conventions
 
 - Each widget file exports a single `pub fn render(...)` function.
-- Widgets receive `&TuiState` (read-only) or `&mut TuiState` (only `activity_log` needs mutable access for `ListState`).
+- Widgets receive `&TuiState` (read-only) or `&mut TuiState` (e.g. `backups_screen` needs mutable access to its `ListState`).
 - Use `theme::focused_border()` / `theme::unfocused_border()` for panels that participate in Tab-cycling.
 - Use `theme::key_hint_style()` for shortcut key labels and `theme::key_desc_style()` for their descriptions.
 - Modal overlays should render `Clear` first to erase the background, then the popup content. See `password_input.rs` and `unlink_confirm.rs` for the `centered_rect()` helper pattern.
@@ -221,7 +217,7 @@ pub mod your_widget;
 |--------|---------|---------|
 | `Paragraph` | Most widgets | Multi-line styled text |
 | `Block` | Panels, screens | Borders and titles |
-| `List` + `ListState` | `activity_log` | Scrollable, selectable list |
+| `List` + `ListState` | `backups_screen` | Scrollable, selectable list |
 | `LineGauge` | `transfer` | Horizontal progress bar with label |
 | `Clear` | `ui`, overlays | Wipe area before redraw |
 
@@ -289,9 +285,9 @@ daemon over the Unix socket via `DaemonClient::send_command(...)`.
      `apply_snapshot()` copies status, auth/crypto state, mount state, account
      email/quota/location, and crypto folder path into `TuiState`, and drives
      auth-screen transitions when the engine's login state changes.
-   - `DaemonCommand::ActivitySince { cursor }` -> `DaemonResponse::Activity { entries, cursor }`.
-     New `ActivityEntry` items (each carries a `seq`) are appended to the log and
-     `activity_cursor` advances.
+   - The daemon also exposes `DaemonCommand::ActivitySince { cursor }` ->
+     `DaemonResponse::Activity { entries, cursor }`, but the TUI no longer renders
+     an activity-log panel and does not call it.
 
 2. **Actions** (from `app.rs` key handlers): `Pause`, `Stop`, `Resume`,
    `StartCrypto`, `SetupCrypto`, `AuthBeginWeb`, `SetAuthToken`, plus the backup
