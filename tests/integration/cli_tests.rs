@@ -465,3 +465,78 @@ fn complete_callback_honors_value_hints() {
         .success()
         .stdout(predicate::str::contains("zzz_sentinel").not());
 }
+
+// ============================================================================
+// service (boot / login autostart)
+// ============================================================================
+
+#[test]
+fn top_level_help_lists_service() {
+    let mut cmd = pcloud_cmd();
+    cmd.arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("service"));
+}
+
+#[test]
+fn bare_service_prints_help_to_stdout_and_exits_zero() {
+    let mut cmd = pcloud_cmd();
+    cmd.arg("service")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Usage: pcloud-cli service"))
+        .stdout(predicate::str::contains("install"))
+        .stdout(predicate::str::contains("uninstall"))
+        .stdout(predicate::str::contains("restart"))
+        .stdout(predicate::str::contains("status"));
+}
+
+#[test]
+fn service_help_lists_all_operations() {
+    let mut cmd = pcloud_cmd();
+    cmd.args(["service", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("install"))
+        .stdout(predicate::str::contains("uninstall"))
+        .stdout(predicate::str::contains("restart"))
+        .stdout(predicate::str::contains("status"));
+}
+
+#[test]
+fn service_install_help_documents_flags() {
+    let mut cmd = pcloud_cmd();
+    cmd.args(["service", "install", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("PATH"))
+        .stdout(predicate::str::contains("--user"))
+        .stdout(predicate::str::contains("--system"))
+        .stdout(predicate::str::contains("--boot"))
+        .stdout(predicate::str::contains("--no-start"));
+}
+
+#[test]
+fn service_install_user_and_system_conflict() {
+    let mut cmd = pcloud_cmd();
+    cmd.args(["service", "install", "--user", "--system"])
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("cannot be used with")
+                .or(predicate::str::contains("conflict")),
+        );
+}
+
+#[test]
+fn service_status_user_and_system_conflict() {
+    let mut cmd = pcloud_cmd();
+    cmd.args(["service", "status", "--user", "--system"])
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("cannot be used with")
+                .or(predicate::str::contains("conflict")),
+        );
+}
