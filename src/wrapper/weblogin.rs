@@ -42,7 +42,7 @@ use crate::Result;
 
 /// Web login base URL.
 const WEB_LOGIN_BASE_URL: &str = "https://my.pcloud.com/webview/authentication";
-const WEB_LOGIN_PLATFORM_ID: u32 = 11;
+const WEB_LOGIN_PLATFORM_ID: u32 = 10;
 
 /// Configuration for web login session.
 ///
