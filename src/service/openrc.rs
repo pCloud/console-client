@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use crate::error::Result;
 
 use super::{
-    current_username, foreground_args, run, run_capture, write_executable, ServiceBackend,
-    ServiceConfig, SERVICE_NAME,
+    current_username, foreground_args, run, run_capture, sh_quote, write_executable,
+    ServiceBackend, ServiceConfig, SERVICE_NAME,
 };
 
 pub struct OpenRcBackend;
@@ -34,7 +34,11 @@ impl OpenRcBackend {
              \x20 need net\n\
              }}\n",
             exe = cfg.exe.display(),
-            args = foreground_args(cfg).join(" "),
+            args = foreground_args(cfg)
+                .iter()
+                .map(|a| sh_quote(a))
+                .collect::<Vec<_>>()
+                .join(" "),
             user = current_username(),
             name = SERVICE_NAME,
         )
@@ -91,5 +95,21 @@ mod tests {
         assert!(s.contains("command_args=\"start --foreground /home/u/pCloud\""));
         assert!(s.contains("command_user="));
         assert!(s.contains("supervise-daemon"));
+    }
+
+    #[test]
+    fn mountpoint_with_spaces_is_quoted_in_command_args() {
+        let cfg = ServiceConfig {
+            scope: Scope::System,
+            trigger: Trigger::Boot,
+            mountpoint: PathBuf::from("/home/u/My Cloud"),
+            exe: PathBuf::from("/usr/bin/pcloud-cli"),
+            start_now: true,
+        };
+        let s = OpenRcBackend.render(&cfg);
+        assert!(
+            s.contains("command_args=\"start --foreground '/home/u/My Cloud'\""),
+            "{s}"
+        );
     }
 }

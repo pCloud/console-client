@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use crate::error::{PCloudError, Result};
 
 use super::{
-    current_username, foreground_args, run, run_capture, write_file, Scope, ServiceBackend,
-    ServiceConfig, Trigger, SERVICE_NAME,
+    current_username, foreground_args, run, run_capture, systemd_quote, write_file, Scope,
+    ServiceBackend, ServiceConfig, Trigger, SERVICE_NAME,
 };
 
 pub struct SystemdBackend;
@@ -43,7 +43,13 @@ fn sctl<'a>(cfg: &ServiceConfig, rest: &[&'a str]) -> Vec<&'a str> {
 impl SystemdBackend {
     /// Render the unit file contents. Pure — used by install and by tests.
     pub fn render(&self, cfg: &ServiceConfig) -> String {
-        let exec_start = format!("{} {}", cfg.exe.display(), foreground_args(cfg).join(" "));
+        let exe = systemd_quote(&cfg.exe.display().to_string());
+        let args = foreground_args(cfg)
+            .iter()
+            .map(|a| systemd_quote(a))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let exec_start = format!("{} {}", exe, args);
         let (user_line, wanted_by) = match cfg.scope {
             Scope::System => (
                 format!("User={}\n", current_username()),
@@ -67,7 +73,6 @@ impl SystemdBackend {
              \n\
              [Install]\n\
              WantedBy={wanted_by}\n",
-            exe = cfg.exe.display(),
         )
     }
 }
@@ -147,5 +152,16 @@ mod tests {
         let u = SystemdBackend.render(&cfg(Scope::System));
         assert!(u.contains("User="));
         assert!(u.contains("WantedBy=multi-user.target"));
+    }
+
+    #[test]
+    fn mountpoint_with_spaces_is_quoted_in_exec_start() {
+        let mut c = cfg(Scope::User);
+        c.mountpoint = PathBuf::from("/home/u/My Cloud");
+        let u = SystemdBackend.render(&c);
+        assert!(
+            u.contains("ExecStart=/usr/bin/pcloud-cli start --foreground '/home/u/My Cloud'"),
+            "{u}"
+        );
     }
 }

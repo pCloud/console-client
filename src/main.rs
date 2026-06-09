@@ -320,13 +320,21 @@ fn run_auth_logout() -> Result<()> {
     Ok(())
 }
 
+/// Marker that `auth status` prints when saved credentials exist.
+/// `has_saved_credentials` greps an `auth status` subprocess for it, so the two
+/// must stay in sync — keep this as the single source of truth.
+const AUTH_STATUS_LOGGED_IN_MARKER: &str = "Logged in";
+
 fn run_auth_status() -> Result<()> {
     let client = PCloudClient::init()?;
     let guard = client
         .lock()
         .map_err(|_| PCloudError::Config("Failed to acquire client lock".to_string()))?;
     if guard.has_saved_credentials() {
-        println!("Logged in (saved credentials present).");
+        println!(
+            "{} (saved credentials present).",
+            AUTH_STATUS_LOGGED_IN_MARKER
+        );
     } else {
         println!("Not logged in.");
     }
@@ -770,7 +778,7 @@ fn run_tui_mode() -> Result<()> {
 // ============================================================================
 
 fn run_service_subcommand(op: ServiceOp) -> Result<()> {
-    use console_client::service::{self, Scope, ServiceConfig, Trigger};
+    use console_client::service::{self, InitSystem, Scope, ServiceConfig, Trigger};
 
     let exe = std::env::current_exe().map_err(PCloudError::Io)?;
     let scope_of = |system: bool| if system { Scope::System } else { Scope::User };
@@ -831,8 +839,9 @@ fn run_service_subcommand(op: ServiceOp) -> Result<()> {
             Ok(())
         }
         ServiceOp::Uninstall { system, .. } => {
+            let scope = scope_of(system);
             let cfg = ServiceConfig {
-                scope: scope_of(system),
+                scope,
                 trigger: Trigger::Login,
                 mountpoint: resolve_mountpoint(None),
                 exe,
@@ -843,9 +852,31 @@ fn run_service_subcommand(op: ServiceOp) -> Result<()> {
                 StatusIndicator::Success,
                 &format!("Removed {} service.", backend),
             );
+
+            // A `--user --boot` install enabled `loginctl enable-linger`. Offer to
+            // undo it, but only after an explicit confirmation: disabling linger
+            // affects the user session as a whole, so other services the user
+            // relies on at boot would be affected too.
+            if scope == Scope::User && service::detect_init() == InitSystem::Systemd {
+                let confirmed = prompt_confirm(
+                    "Disable systemd lingering for your user? This stops your user \
+                     manager from running at boot. Only do this if no OTHER service \
+                     you use relies on lingering.",
+                )?;
+                if confirmed {
+                    service::disable_user_linger();
+                    print_status(StatusIndicator::Success, "Disabled user lingering.");
+                } else {
+                    print_status(StatusIndicator::Info, "Left user lingering enabled.");
+                }
+            }
             Ok(())
         }
         ServiceOp::Restart { system, .. } => {
+            // For supervised backends (systemd/launchd/OpenRC/runit) the mountpoint
+            // is baked into the installed unit, so it is irrelevant here. The
+            // per-user fallback re-spawns `start <mount>` and would use this default
+            // mountpoint, since the original install path is not persisted.
             let cfg = ServiceConfig {
                 scope: scope_of(system),
                 trigger: Trigger::Login,
@@ -881,7 +912,7 @@ fn has_saved_credentials(exe: &Path) -> bool {
     std::process::Command::new(exe)
         .args(["auth", "status"])
         .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).contains("Logged in"))
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains(AUTH_STATUS_LOGGED_IN_MARKER))
         .unwrap_or(false)
 }
 

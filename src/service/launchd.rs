@@ -10,8 +10,8 @@ use std::path::PathBuf;
 use crate::error::{PCloudError, Result};
 
 use super::{
-    current_username, run, run_capture, write_file, Scope, ServiceBackend, ServiceConfig,
-    LAUNCHD_LABEL,
+    current_username, run, run_capture, write_file, xml_escape, Scope, ServiceBackend,
+    ServiceConfig, LAUNCHD_LABEL,
 };
 
 pub struct LaunchdBackend;
@@ -52,14 +52,14 @@ impl LaunchdBackend {
         args.extend(super::foreground_args(cfg));
         let program_args: String = args
             .iter()
-            .map(|a| format!("    <string>{}</string>\n", a))
+            .map(|a| format!("    <string>{}</string>\n", xml_escape(a)))
             .collect();
         // System LaunchDaemons run as root unless told otherwise; pin to the
         // installing user so the per-user DB/mount are correct.
         let username_key = match cfg.scope {
             Scope::System => format!(
                 "  <key>UserName</key>\n  <string>{}</string>\n",
-                current_username()
+                xml_escape(&current_username())
             ),
             Scope::User => String::new(),
         };
@@ -169,5 +169,14 @@ mod tests {
     fn daemon_plist_pins_username() {
         let p = LaunchdBackend.render(&cfg(Scope::System));
         assert!(p.contains("<key>UserName</key>"));
+    }
+
+    #[test]
+    fn mountpoint_markup_chars_are_xml_escaped() {
+        let mut c = cfg(Scope::User);
+        c.mountpoint = PathBuf::from("/Users/u/A&B");
+        let p = LaunchdBackend.render(&c);
+        assert!(p.contains("<string>/Users/u/A&amp;B</string>"), "{p}");
+        assert!(!p.contains("A&B"), "raw ampersand leaked: {p}");
     }
 }

@@ -163,14 +163,31 @@ pub fn install(cfg: &ServiceConfig) -> Result<&'static str> {
 }
 
 /// Restart the service; returns the chosen backend's label.
+///
+/// On the per-user fallback the install-time trigger is unknown here, but the
+/// XDG and cron backends share the same stop+respawn behavior, so restart works
+/// regardless of which one was installed.
 pub fn restart(cfg: &ServiceConfig) -> Result<&'static str> {
+    if is_user_fallback(cfg) {
+        fallback::XdgAutostartBackend.restart(cfg)?;
+        return Ok("XDG autostart / cron");
+    }
     let backend = select_backend(cfg)?;
     backend.restart(cfg)?;
     Ok(backend.describe())
 }
 
 /// Query service status; returns `(backend label, status line)`.
+///
+/// On the per-user fallback the install-time trigger is unknown here, so report
+/// **both** the XDG autostart entry and the cron `@reboot` line so the installed
+/// one is always shown.
 pub fn status(cfg: &ServiceConfig) -> Result<(&'static str, String)> {
+    if is_user_fallback(cfg) {
+        let xdg = fallback::XdgAutostartBackend.status(cfg)?;
+        let cron = fallback::CronBackend.status(cfg)?;
+        return Ok(("XDG autostart / cron", format!("{}; {}", xdg, cron)));
+    }
     let backend = select_backend(cfg)?;
     let line = backend.status(cfg)?;
     Ok((backend.describe(), line))
@@ -191,6 +208,16 @@ pub fn uninstall(cfg: &ServiceConfig) -> Result<&'static str> {
     Ok(backend.describe())
 }
 
+/// Best-effort `loginctl disable-linger` for the calling user.
+///
+/// Used after a systemd `--user` uninstall to undo the lingering that a
+/// `--user --boot` install enabled. Failures are ignored (linger may never have
+/// been enabled). NOTE: this disables lingering for the user entirely, which may
+/// affect other services the user relies on — callers should confirm first.
+pub fn disable_user_linger() {
+    let _ = run("loginctl", &["disable-linger", &current_username()]);
+}
+
 // ---------------------------------------------------------------------------
 // Shared helpers for backends
 // ---------------------------------------------------------------------------
@@ -204,6 +231,63 @@ pub(crate) fn foreground_args(cfg: &ServiceConfig) -> Vec<String> {
         "--foreground".to_string(),
         cfg.mountpoint.display().to_string(),
     ]
+}
+
+// ---------------------------------------------------------------------------
+// Argument quoting
+//
+// Mountpoints (and the binary path) can contain spaces or shell/markup
+// metacharacters. Each backend renders into a different syntax, so we quote
+// per-dialect. All helpers are "quote only if needed": strings made of safe
+// characters pass through unchanged, keeping the generated files readable and
+// the common case identical to the unquoted output.
+// ---------------------------------------------------------------------------
+
+/// True if `s` can be passed unquoted in a shell/init command line.
+fn is_cmdline_safe(s: &str) -> bool {
+    !s.is_empty()
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"/._-:@+,=".contains(&b))
+}
+
+/// POSIX-shell single-quote `s` when needed (OpenRC `command_args`, the runit
+/// `run` script, the cron `@reboot` line).
+pub(crate) fn sh_quote(s: &str) -> String {
+    if is_cmdline_safe(s) {
+        s.to_string()
+    } else {
+        format!("'{}'", s.replace('\'', "'\\''"))
+    }
+}
+
+/// Quote `s` for a systemd unit command line: single-quote grouping (which
+/// systemd understands) plus `%`→`%%` so unit specifiers are not expanded.
+pub(crate) fn systemd_quote(s: &str) -> String {
+    sh_quote(&s.replace('%', "%%"))
+}
+
+/// Quote `s` for a `.desktop` `Exec=` value per the XDG desktop-entry spec:
+/// reserved characters are double-quoted and backslash-escaped, and the field
+/// code `%` is doubled.
+pub(crate) fn desktop_quote(s: &str) -> String {
+    if is_cmdline_safe(s) {
+        s.to_string()
+    } else {
+        let escaped = s
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('`', "\\`")
+            .replace('$', "\\$")
+            .replace('%', "%%");
+        format!("\"{}\"", escaped)
+    }
+}
+
+/// XML-escape `s` for inclusion in a launchd plist `<string>` element.
+pub(crate) fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// Is `name` an executable on `PATH`?
@@ -295,5 +379,41 @@ mod tests {
         for trig in [Trigger::Login, Trigger::Boot] {
             assert!(select_backend(&cfg(Scope::User, trig)).is_ok());
         }
+    }
+
+    #[test]
+    fn sh_quote_leaves_safe_strings_bare() {
+        assert_eq!(sh_quote("/home/u/pCloud"), "/home/u/pCloud");
+        assert_eq!(sh_quote("--foreground"), "--foreground");
+        assert_eq!(sh_quote(""), "''");
+    }
+
+    #[test]
+    fn sh_quote_wraps_and_escapes() {
+        assert_eq!(sh_quote("/home/u/My Cloud"), "'/home/u/My Cloud'");
+        assert_eq!(sh_quote("a'b"), "'a'\\''b'");
+        assert_eq!(sh_quote("$(rm -rf)"), "'$(rm -rf)'");
+    }
+
+    #[test]
+    fn systemd_quote_doubles_percent_and_groups() {
+        // Bare when safe.
+        assert_eq!(systemd_quote("/home/u/pCloud"), "/home/u/pCloud");
+        // % is a specifier and forces quoting + doubling.
+        assert_eq!(systemd_quote("/a%b"), "'/a%%b'");
+        assert_eq!(systemd_quote("/home/u/My Cloud"), "'/home/u/My Cloud'");
+    }
+
+    #[test]
+    fn desktop_quote_escapes_reserved_chars() {
+        assert_eq!(desktop_quote("/home/u/pCloud"), "/home/u/pCloud");
+        assert_eq!(desktop_quote("/home/u/My Cloud"), "\"/home/u/My Cloud\"");
+        assert_eq!(desktop_quote("a$b`c"), "\"a\\$b\\`c\"");
+    }
+
+    #[test]
+    fn xml_escape_handles_markup() {
+        assert_eq!(xml_escape("/Users/u/pCloud"), "/Users/u/pCloud");
+        assert_eq!(xml_escape("a&b<c>d"), "a&amp;b&lt;c&gt;d");
     }
 }

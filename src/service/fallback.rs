@@ -11,7 +11,7 @@ use std::process::{Command, Stdio};
 use crate::daemon::{is_daemon_running, DaemonConfig};
 use crate::error::{PCloudError, Result};
 
-use super::{write_file, ServiceBackend, ServiceConfig, SERVICE_NAME};
+use super::{desktop_quote, sh_quote, write_file, ServiceBackend, ServiceConfig, SERVICE_NAME};
 
 /// Marker appended to our crontab line so we can find/remove it idempotently.
 const CRON_TAG: &str = "# pcloud-cli service (managed)";
@@ -66,8 +66,8 @@ impl XdgAutostartBackend {
              Exec={exe} start {mount}\n\
              Terminal=false\n\
              X-GNOME-Autostart-enabled=true\n",
-            exe = cfg.exe.display(),
-            mount = cfg.mountpoint.display(),
+            exe = desktop_quote(&cfg.exe.display().to_string()),
+            mount = desktop_quote(&cfg.mountpoint.display().to_string()),
         )
     }
 }
@@ -112,8 +112,8 @@ pub struct CronBackend;
 fn cron_line(cfg: &ServiceConfig) -> String {
     format!(
         "@reboot {} start {} {}",
-        cfg.exe.display(),
-        cfg.mountpoint.display(),
+        sh_quote(&cfg.exe.display().to_string()),
+        sh_quote(&cfg.mountpoint.display().to_string()),
         CRON_TAG
     )
 }
@@ -230,6 +230,22 @@ mod tests {
         let l = cron_line(&cfg(Trigger::Boot));
         assert!(l.starts_with("@reboot /usr/bin/pcloud-cli start /home/u/pCloud"));
         assert!(l.ends_with(CRON_TAG));
+    }
+
+    #[test]
+    fn spaced_mountpoint_is_quoted() {
+        let mut c = cfg(Trigger::Login);
+        c.mountpoint = PathBuf::from("/home/u/My Cloud");
+        let d = XdgAutostartBackend.render(&c);
+        assert!(
+            d.contains("Exec=/usr/bin/pcloud-cli start \"/home/u/My Cloud\""),
+            "{d}"
+        );
+        let l = cron_line(&c);
+        assert!(
+            l.starts_with("@reboot /usr/bin/pcloud-cli start '/home/u/My Cloud'"),
+            "{l}"
+        );
     }
 
     #[test]
