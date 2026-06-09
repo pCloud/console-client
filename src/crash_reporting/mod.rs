@@ -53,7 +53,13 @@ pub fn run_monitor(_socket_name: &str, _dump_dir: &str) {
 /// that could panic or crash. It:
 /// 1. Checks for and uploads any queued crash dumps from previous runs
 /// 2. Installs the Rust panic hook for Bugsnag reporting
-/// 3. Installs the native signal handler for minidump generation
+///
+/// It deliberately does **not** install the native (signal) crash handler:
+/// that is fork-sensitive and must be set up in the process that actually runs
+/// the pclsync engine, after any daemonization fork. Call
+/// [`install_native_handler`] from those processes once they are past the
+/// fork. The Rust panic hook installed here, by contrast, survives `fork`
+/// unchanged and so covers every process.
 ///
 /// When `crash-reporting` is not enabled, this is a no-op.
 pub fn init() {
@@ -61,9 +67,30 @@ pub fn init() {
     {
         native::report_previous_crash_if_any();
         let client = config::create_client();
-        panic_hook::install(client.clone());
-        native::install(client);
+        panic_hook::install(client);
     }
+}
+
+/// Install the native (signal) crash handler for this process.
+///
+/// Spawns the out-of-process crash reporter and attaches handlers for SIGSEGV,
+/// SIGABRT, SIGBUS and SIGFPE so native crashes (including those originating in
+/// the pclsync C library) are captured as minidumps and uploaded to Bugsnag.
+///
+/// This **must** be called from the process that should be monitored, *after*
+/// any `fork`/daemonization. In particular the background daemon
+/// (`pcloud-cli start`) double-forks via the `daemonize` crate, which reparents
+/// the daemon away from the process that called [`init`]; installing the native
+/// handler before that fork would leave the reporter unable to `ptrace` the
+/// daemon (the `PR_SET_PTRACER` declaration and the reporter's parent link are
+/// both lost across the fork). It is therefore installed by the long-running
+/// engine entry points — foreground `mount`, and the daemon/foreground body of
+/// `start` once it is past `daemonize()`.
+///
+/// Idempotent and a no-op when `crash-reporting` is not enabled.
+pub fn install_native_handler() {
+    #[cfg(feature = "crash-reporting")]
+    native::install();
 }
 
 /// Report a non-fatal error to Bugsnag.

@@ -373,6 +373,10 @@ fn run_auth_unlink(yes: bool) -> Result<()> {
 fn run_mount_subcommand(args: MountArgs) -> Result<()> {
     setup_signal_handler()?;
 
+    // Foreground mount runs the pclsync engine in this process with no fork, so
+    // install the native crash handler here (before the engine starts threads).
+    console_client::crash_reporting::install_native_handler();
+
     print_status(StatusIndicator::Info, "Initializing pCloud client...");
     let client = PCloudClient::init()?;
 
@@ -497,6 +501,15 @@ fn run_start_subcommand(args: StartArgs) -> Result<()> {
     }
 
     // -- Daemon process (the daemonized child, or this process in foreground). --
+
+    // Install the native crash handler now, AFTER `daemonize()`, so it lives in
+    // the actual daemon process. The reporter is spawned as a child of this
+    // process and `PR_SET_PTRACER` is declared here; doing it before the fork
+    // would leave the reporter unable to `ptrace` the reparented daemon under
+    // `yama` `ptrace_scope >= 1`. Must precede `psync_init()` so crashes in
+    // pclsync's worker threads are covered too. (In `--foreground` mode there is
+    // no fork, so this simply installs in-process.)
+    console_client::crash_reporting::install_native_handler();
 
     setup_daemon_signals()?;
 

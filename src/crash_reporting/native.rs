@@ -14,13 +14,13 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
-use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
-
-use bugsnag::Bugsnag;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Bugsnag minidump upload endpoint.
 const BUGSNAG_MINIDUMP_URL: &str = "https://notify.bugsnag.com/minidump";
+
+/// Guards against installing the native handler more than once per process.
+static INSTALLED: AtomicBool = AtomicBool::new(false);
 
 /// Hidden CLI flag used to launch the crash monitor subprocess.
 pub const CRASH_MONITOR_ARG: &str = "--crash-monitor";
@@ -67,9 +67,23 @@ pub fn report_previous_crash_if_any() {
 /// Install the native crash handler.
 ///
 /// Re-execs the current binary as a dedicated crash reporter child process,
-/// then attaches a `crash_handler::CrashHandler` in the main process that
+/// then attaches a `crash_handler::CrashHandler` in the calling process that
 /// will notify the reporter on SIGSEGV, SIGABRT, SIGBUS, SIGFPE.
-pub fn install(_client: Arc<Bugsnag>) {
+///
+/// **Must be called in the process that should be monitored, after any
+/// `fork`/daemonization has happened.** The monitor is spawned as a child of
+/// the caller and `PR_SET_PTRACER` is declared on the caller; both of those
+/// relationships are broken by a subsequent `fork` (the daemon double-fork
+/// reparents the monitored process away from the declarer, so the reporter
+/// could no longer `ptrace` it under `yama` `ptrace_scope >= 1`). See
+/// `crate::crash_reporting::install_native_handler` for the call sites.
+///
+/// Idempotent: only the first call per process takes effect.
+pub fn install() {
+    if INSTALLED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
     // Ensure the crash dump directory exists
     let dump_dir = crash_dump_dir();
     let _ = fs::create_dir_all(&dump_dir);
