@@ -33,6 +33,7 @@
 
 #include <iostream>
 #include <string>
+#include <cctype>
 #include <termios.h>
 #include <unistd.h>
 #include <stdio.h>
@@ -169,6 +170,83 @@ static char const * status2string (uint32_t status){
   }
 }
 
+/* Keep in sync with psync_my_2fa_code in plibs.c, which is a char[32]; the
+ * library silently truncates anything longer. */
+static const size_t PSYNC_TFA_CODE_MAX=31;
+
+static std::string trim(const std::string &s){
+  size_t b=s.find_first_not_of(" \t\r\n");
+  if (b==std::string::npos)
+    return "";
+  return s.substr(b, s.find_last_not_of(" \t\r\n")-b+1);
+}
+
+static bool starts_with_ci(const std::string &s, const char *prefix){
+  size_t n=strlen(prefix);
+  if (s.size()<n)
+    return false;
+  for (size_t i=0; i<n; ++i)
+    if (tolower((unsigned char)s[i])!=tolower((unsigned char)prefix[i]))
+      return false;
+  return true;
+}
+
+/* Turns what the user typed at the prompt into what the API expects. An explicit
+ * 'r:' or 'recovery:' (any case) marks a recovery code; spaces and dashes inside
+ * the code are dropped. Returns false when the result cannot be a valid code, so
+ * the caller can re-prompt locally: the API answers a malformed code with a bare
+ * 1022 "Please provide 'code'", which is indistinguishable from a missing
+ * parameter and used to hang the login.
+ *
+ * The marker must carry its colon. A bare leading 'r' is far more likely a
+ * mistyped device code than a real recovery code -- codes sent to a device are
+ * six digits, while the recovery endpoint wants something longer -- and reading
+ * it as the marker only trades a local rejection for a pointless round trip that
+ * comes back 2012. Left alone, 'r341820' fails the digits check below and the
+ * user is pointed at the prefix. */
+static bool normalize_tfa_code(const std::string &input, std::string &out, int &is_recovery){
+  std::string code=trim(input);
+  is_recovery=1;
+
+  if (starts_with_ci(code, "recovery:"))
+    code.erase(0, 9);
+  else if (starts_with_ci(code, "r:"))
+    code.erase(0, 2);
+  else
+    is_recovery=0;
+
+  code=trim(code);
+  std::string stripped;
+  for (size_t i=0; i<code.size(); ++i)
+    if (code[i]!=' ' && code[i]!='-')
+      stripped+=code[i];
+
+  if (stripped.empty()){
+    std::cout << "No code entered." << std::endl;
+    return false;
+  }
+  if (stripped.size()>PSYNC_TFA_CODE_MAX){
+    std::cout << "That code is too long (" << stripped.size() << " characters, max "
+              << PSYNC_TFA_CODE_MAX << ")." << std::endl;
+    return false;
+  }
+  if (!is_recovery){
+    for (size_t i=0; i<stripped.size(); ++i)
+      if (!isdigit((unsigned char)stripped[i])){
+        std::cout << "A login code sent to a device is digits only. For a recovery code, "
+                     "prefix it with 'r:'." << std::endl;
+        return false;
+      }
+    if (stripped.size()<4 || stripped.size()>12){
+      std::cout << "A login code sent to a device is 6 digits." << std::endl;
+      return false;
+    }
+  }
+
+  out=stripped;
+  return true;
+}
+
 static void prompt_and_submit_tfa(bool request_code){
   if (request_code){
     plogged_device_list_t *devs=NULL;
@@ -195,14 +273,20 @@ static void prompt_and_submit_tfa(bool request_code){
       if (phone) psync_free(phone);
     }
   }
-  std::cout << "Enter login code (prefix with 'r:' for recovery code): " << std::flush;
   std::string code;
-  std::getline(std::cin, code);
   int is_recovery=0;
-  if (code.rfind("r:", 0)==0){
-    is_recovery=1;
-    code.erase(0, 2);
+  while (1){
+    std::cout << "Enter login code (prefix with 'r:' for recovery code): " << std::flush;
+    std::string line;
+    if (!std::getline(std::cin, line)){
+      std::cout << "No input available to read the login code from." << std::endl;
+      exit(1);
+    }
+    if (normalize_tfa_code(line, code, is_recovery))
+      break;
   }
+  if (is_recovery)
+    std::cout << "Submitting as a recovery code." << std::endl;
   psync_tfa_set_code(code.c_str(), 1 /*trust this device*/, is_recovery);
 }
 
