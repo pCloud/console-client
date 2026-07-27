@@ -1,2 +1,7 @@
 *.o
 *.a
+
+# An in-tree "cmake ." of the vendored mbedtls generates a Makefile per configured
+# subdirectory. Its own .gitignore covers CMakeCache.txt/CMakeFiles/cmake_install.cmake
+# but not these; the tree tracks only CMakeLists.txt files, never a Makefile.
+/pCloudCC/lib/mbedtls/**/Makefile

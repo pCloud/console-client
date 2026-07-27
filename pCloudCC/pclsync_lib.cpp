@@ -33,6 +33,7 @@
 
 #include <iostream>
 #include <string>
+#include <cctype>
 #include <termios.h>
 #include <unistd.h>
 #include <stdio.h>
@@ -163,8 +164,130 @@ static char const * status2string (uint32_t status){
     case PSTATUS_SCANNING: return "SCANNING";
     case PSTATUS_USER_MISMATCH: return "USER_MISMATCH";
     case PSTATUS_ACCOUT_EXPIRED: return "ACCOUT_EXPIRED";
+    case PSTATUS_TFA_REQUIRED: return "TFA_REQUIRED";
+    case PSTATUS_BAD_TFA_CODE: return "BAD_TFA_CODE";
     default :return "Unrecognized status";
   }
+}
+
+/* Keep in sync with psync_my_2fa_code in plibs.c, which is a char[32]; the
+ * library silently truncates anything longer. */
+static const size_t PSYNC_TFA_CODE_MAX=31;
+
+static std::string trim(const std::string &s){
+  size_t b=s.find_first_not_of(" \t\r\n");
+  if (b==std::string::npos)
+    return "";
+  return s.substr(b, s.find_last_not_of(" \t\r\n")-b+1);
+}
+
+static bool starts_with_ci(const std::string &s, const char *prefix){
+  size_t n=strlen(prefix);
+  if (s.size()<n)
+    return false;
+  for (size_t i=0; i<n; ++i)
+    if (tolower((unsigned char)s[i])!=tolower((unsigned char)prefix[i]))
+      return false;
+  return true;
+}
+
+/* Turns what the user typed at the prompt into what the API expects. An explicit
+ * 'r:' or 'recovery:' (any case) marks a recovery code; spaces and dashes inside
+ * the code are dropped. Returns false when the result cannot be a valid code, so
+ * the caller can re-prompt locally: the API answers a malformed code with a bare
+ * 1022 "Please provide 'code'", which is indistinguishable from a missing
+ * parameter and used to hang the login.
+ *
+ * The marker must carry its colon. A bare leading 'r' is far more likely a
+ * mistyped device code than a real recovery code -- codes sent to a device are
+ * six digits, while the recovery endpoint wants something longer -- and reading
+ * it as the marker only trades a local rejection for a pointless round trip that
+ * comes back 2012. Left alone, 'r341820' fails the digits check below and the
+ * user is pointed at the prefix. */
+static bool normalize_tfa_code(const std::string &input, std::string &out, int &is_recovery){
+  std::string code=trim(input);
+  is_recovery=1;
+
+  if (starts_with_ci(code, "recovery:"))
+    code.erase(0, 9);
+  else if (starts_with_ci(code, "r:"))
+    code.erase(0, 2);
+  else
+    is_recovery=0;
+
+  code=trim(code);
+  std::string stripped;
+  for (size_t i=0; i<code.size(); ++i)
+    if (code[i]!=' ' && code[i]!='-')
+      stripped+=code[i];
+
+  if (stripped.empty()){
+    std::cout << "No code entered." << std::endl;
+    return false;
+  }
+  if (stripped.size()>PSYNC_TFA_CODE_MAX){
+    std::cout << "That code is too long (" << stripped.size() << " characters, max "
+              << PSYNC_TFA_CODE_MAX << ")." << std::endl;
+    return false;
+  }
+  if (!is_recovery){
+    for (size_t i=0; i<stripped.size(); ++i)
+      if (!isdigit((unsigned char)stripped[i])){
+        std::cout << "A login code sent to a device is digits only. For a recovery code, "
+                     "prefix it with 'r:'." << std::endl;
+        return false;
+      }
+    if (stripped.size()<4 || stripped.size()>12){
+      std::cout << "A login code sent to a device is 6 digits." << std::endl;
+      return false;
+    }
+  }
+
+  out=stripped;
+  return true;
+}
+
+static void prompt_and_submit_tfa(bool request_code){
+  if (request_code){
+    plogged_device_list_t *devs=NULL;
+    int rc=psync_tfa_send_nofification(&devs);
+    if (rc==0 && devs && devs->entrycnt>0){
+      std::cout << "A login code was sent via notification to:" << std::endl;
+      for (uint32_t i=0; i<devs->entrycnt; ++i)
+        std::cout << "  - " << devs->devices[i].name << std::endl;
+      psync_free(devs);
+    } else {
+      if (devs) psync_free(devs);
+      char *country_code=NULL, *phone=NULL;
+      rc=psync_tfa_send_sms(&country_code, &phone);
+      if (rc==0){
+        std::cout << "A login code was sent via SMS";
+        if (country_code && phone)
+          std::cout << " to +" << country_code << " " << phone;
+        std::cout << "." << std::endl;
+      } else {
+        std::cout << "Could not auto-send a code (notification rc=" << rc
+                  << "). If you have a recovery code, enter it prefixed with 'r:'." << std::endl;
+      }
+      if (country_code) psync_free(country_code);
+      if (phone) psync_free(phone);
+    }
+  }
+  std::string code;
+  int is_recovery=0;
+  while (1){
+    std::cout << "Enter login code (prefix with 'r:' for recovery code): " << std::flush;
+    std::string line;
+    if (!std::getline(std::cin, line)){
+      std::cout << "No input available to read the login code from." << std::endl;
+      exit(1);
+    }
+    if (normalize_tfa_code(line, code, is_recovery))
+      break;
+  }
+  if (is_recovery)
+    std::cout << "Submitting as a recovery code." << std::endl;
+  psync_tfa_set_code(code.c_str(), 1 /*trust this device*/, is_recovery);
 }
 
 static void status_change(pstatus_t* status) {
@@ -206,6 +329,21 @@ static void status_change(pstatus_t* status) {
     }
       
     }
+  }
+  else if (status->status==PSTATUS_TFA_REQUIRED){
+    if (clib::pclsync_lib::get_lib().is_daemon()){
+      std::cout << "TFA required but running as daemon; cannot prompt for code." << std::endl;
+      exit(1);
+    }
+    prompt_and_submit_tfa(true);
+  }
+  else if (status->status==PSTATUS_BAD_TFA_CODE){
+    if (clib::pclsync_lib::get_lib().is_daemon()){
+      std::cout << "Bad TFA code and running as daemon; cannot re-prompt." << std::endl;
+      exit(1);
+    }
+    std::cout << "Code rejected, try again." << std::endl;
+    prompt_and_submit_tfa(false);
   }
   if (status->status==PSTATUS_READY || status->status==PSTATUS_UPLOADING || status->status==PSTATUS_DOWNLOADING || status->status==PSTATUS_DOWNLOADINGANDUPLOADING){
     if (!cryptocheck){

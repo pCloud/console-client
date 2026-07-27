@@ -482,6 +482,18 @@ static psync_socket *get_connected_socket(){
         digest=0;
         continue;
       }
+      else if (psync_my_2fa_code_type && psync_my_2fa_code[0]){
+        /* Unexpected error while a two factor code was pending. The API did not
+         * accept the code we just sent -- 1022 "Please provide 'code'" is what a
+         * malformed one gets. Keeping the code would resend it every
+         * PSYNC_SLEEP_BEFORE_RECONNECT forever, with no way for the user to
+         * correct it, so discard it and ask again. */
+        debug(D_WARNING, "got %lu while submitting a two factor code, discarding it", (unsigned long)result);
+        psync_my_2fa_code_type=0;
+        psync_my_2fa_code[0]=0;
+        psync_set_status(PSTATUS_TYPE_AUTH, PSTATUS_AUTH_BADCODE);
+        psync_wait_status(PSTATUS_TYPE_AUTH, PSTATUS_AUTH_PROVIDED);
+      }
       else
         psync_milisleep(PSYNC_SLEEP_BEFORE_RECONNECT);
       continue;
